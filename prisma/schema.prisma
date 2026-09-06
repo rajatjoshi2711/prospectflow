@@ -71,6 +71,7 @@ model ImportBatch {
   user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   status    ImportBatchStatus @default(PENDING)
   blobUrl   String
+  fileCount Int?
   errorMessage String?
   createdAt DateTime          @default(now())
   completedAt DateTime?
