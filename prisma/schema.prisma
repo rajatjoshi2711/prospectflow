@@ -1,0 +1,332 @@
+// ProspectFlow — Prisma schema
+// Full data model per the approved build plan. Only the Organization/User
+// pieces are wired up to application code in Phase 1 (Foundation); the rest
+// of the models exist now so later phases can build on a stable schema.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Auth / org
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  MEMBER
+}
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  emailDomain String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users            User[]
+  icps             ICP[]
+  channelPartners  ChannelPartner[]
+  quickSuggestions QuickSuggestion[]
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  passwordHash   String
+  name           String
+  role           Role     @default(MEMBER)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lastImportAt   DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  importBatches             ImportBatch[]
+  campaigns                 Campaign[]
+  chatMessages               ChatMessage[]
+  relationshipStrengthScores RelationshipStrengthScore[]
+
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Ingestion
+// ---------------------------------------------------------------------------
+
+enum ImportBatchStatus {
+  PENDING
+  PROCESSING
+  COMPLETE
+  FAILED
+}
+
+model ImportBatch {
+  id        String            @id @default(cuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    ImportBatchStatus @default(PENDING)
+  blobUrl   String
+  errorMessage String?
+  createdAt DateTime          @default(now())
+  completedAt DateTime?
+
+  connections  Connection[]
+  positions    Position[]
+  invitations  Invitation[]
+  messages     MessageRecord[]
+  rawCsvRows   RawCsvRow[]
+
+  jobChangeEventsAsPrevious JobChangeEvent[] @relation("PreviousBatch")
+  jobChangeEventsAsCurrent  JobChangeEvent[] @relation("CurrentBatch")
+
+  @@index([userId])
+  @@index([userId, status, completedAt])
+}
+
+model Connection {
+  id            String   @id @default(cuid())
+  importBatchId String
+  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  identityKey   String
+  firstName     String?
+  lastName      String?
+  linkedinUrl   String?
+  email         String?
+  company       String?
+  position      String?
+  connectedOn   DateTime?
+  country       String?
+  createdAt     DateTime @default(now())
+
+  prospectMatches           ProspectMatch[]
+  campaignLeads             CampaignLead[]
+  relationshipStrengthScores RelationshipStrengthScore[]
+
+  @@index([importBatchId])
+  @@index([identityKey])
+}
+
+model Position {
+  id            String   @id @default(cuid())
+  importBatchId String
+  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  identityKey   String
+  companyName   String?
+  title         String?
+  location      String?
+  startedOn     DateTime?
+  finishedOn    DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([importBatchId])
+  @@index([identityKey])
+}
+
+model Invitation {
+  id            String   @id @default(cuid())
+  importBatchId String
+  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  identityKey   String
+  direction     String?
+  from          String?
+  to            String?
+  sentAt        DateTime?
+  message       String?
+  createdAt     DateTime @default(now())
+
+  @@index([importBatchId])
+  @@index([identityKey])
+}
+
+model MessageRecord {
+  id             String   @id @default(cuid())
+  importBatchId  String
+  importBatch    ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  identityKey    String
+  conversationId String?
+  from           String?
+  to             String?
+  sentAt         DateTime?
+  content        String?
+  createdAt      DateTime @default(now())
+
+  @@index([importBatchId])
+  @@index([identityKey])
+  @@index([conversationId])
+}
+
+model RawCsvRow {
+  id             String   @id @default(cuid())
+  importBatchId  String
+  importBatch    ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  sourceFilename String
+  rowData        Json
+  createdAt      DateTime @default(now())
+
+  @@index([importBatchId])
+  @@index([sourceFilename])
+}
+
+model JobChangeEvent {
+  id                String   @id @default(cuid())
+  identityKey       String
+  previousBatchId   String
+  previousBatch     ImportBatch @relation("PreviousBatch", fields: [previousBatchId], references: [id], onDelete: Cascade)
+  currentBatchId    String
+  currentBatch      ImportBatch @relation("CurrentBatch", fields: [currentBatchId], references: [id], onDelete: Cascade)
+  previousTitle     String?
+  previousCompany   String?
+  newTitle          String?
+  newCompany        String?
+  detectedAt        DateTime @default(now())
+
+  @@index([identityKey])
+  @@index([currentBatchId])
+}
+
+// ---------------------------------------------------------------------------
+// ICP / channel partner matching
+// ---------------------------------------------------------------------------
+
+model ICP {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  country        String?
+  industry       String?
+  positions      String[]
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  prospectMatches ProspectMatch[]
+
+  @@index([organizationId])
+}
+
+model ChannelPartner {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  industry       String?
+  criteria       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  prospectMatches ProspectMatch[]
+
+  @@index([organizationId])
+}
+
+model ProspectMatch {
+  id               String   @id @default(cuid())
+  connectionId     String
+  connection       Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  icpId            String?
+  icp              ICP? @relation(fields: [icpId], references: [id], onDelete: Cascade)
+  channelPartnerId String?
+  channelPartner   ChannelPartner? @relation(fields: [channelPartnerId], references: [id], onDelete: Cascade)
+  score            Int
+  rationale        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([connectionId])
+  @@index([icpId])
+  @@index([channelPartnerId])
+}
+
+// ---------------------------------------------------------------------------
+// Campaigns
+// ---------------------------------------------------------------------------
+
+enum CampaignLeadStatus {
+  REQUEST_PENDING
+  REQUEST_ACCEPTED
+  FIRST_MESSAGE_SENT
+  CONVERSATION_ONGOING
+}
+
+model Campaign {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  sourceFileName String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  leads CampaignLead[]
+
+  @@index([userId])
+}
+
+model CampaignLead {
+  id           String   @id @default(cuid())
+  campaignId   String
+  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  connectionId String?
+  connection   Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  linkedinUrl  String?
+  firstName    String?
+  lastName     String?
+  company      String?
+  status       CampaignLeadStatus @default(REQUEST_PENDING)
+  rawRow       Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([campaignId])
+  @@index([connectionId])
+}
+
+// ---------------------------------------------------------------------------
+// AI features
+// ---------------------------------------------------------------------------
+
+model RelationshipStrengthScore {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  score        Int
+  factors      Json
+  computedAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([connectionId])
+}
+
+model QuickSuggestion {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+}
+
+model ChatMessage {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String
+  role           String
+  content        String
+  toolCalls      Json?
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+  @@index([conversationId])
+}

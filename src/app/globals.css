@@ -1,0 +1,411 @@
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+@import "tailwindcss";
+
+/* ==========================================================================
+   EmergeFlow Design System tokens
+   Source of truth: emergeflow-design skill / assets/colors_and_type.css
+   ========================================================================== */
+
+:root {
+  /* --- Brand blue (primary, the workhorse) --- */
+  --blue-50: #eaf2fb;
+  --blue-100: #ccddf1;
+  --blue-200: #99bbe3;
+  --blue-300: #6699d5;
+  --blue-400: #3377c7;
+  --blue-500: #0d519b; /* EmergeFlow Blue */
+  --blue-600: #0a4280;
+  --blue-700: #083464;
+  --blue-800: #062649;
+  --blue-900: #04182e;
+
+  /* --- Brand green (accent / highlight, never a primary CTA) --- */
+  --green-50: #f1f8e7;
+  --green-100: #dfeec4;
+  --green-200: #c0dd8e;
+  --green-300: #a1cc58;
+  --green-400: #8dc340;
+  --green-500: #78b833; /* EmergeFlow Green */
+  --green-600: #5f9226;
+  --green-700: #496f1d;
+  --green-800: #335015;
+  --green-900: #1f320c;
+
+  /* --- Cool neutrals --- */
+  --neutral-25: #fafbfc;
+  --neutral-50: #f4f6f8;
+  --neutral-100: #e8ecf1;
+  --neutral-200: #d2dae3;
+  --neutral-300: #b0bbc9;
+  --neutral-400: #8896a8;
+  --neutral-500: #5d6e84;
+  --neutral-600: #44546a;
+  --neutral-700: #2f3d52;
+  --neutral-800: #1e2a3d;
+  --neutral-900: #111928;
+
+  /* --- Semantic --- */
+  --success: #78b833;
+  --warning: #e0a012;
+  --danger: #d7373f;
+  --info: #0d519b;
+  --success-soft: #f1f8e7;
+  --warning-soft: #fbf1dc;
+  --danger-soft: #fbe9ea;
+  --info-soft: #eaf2fb;
+
+  /* --- Common roles --- */
+  --text-primary: var(--neutral-900);
+  --text-secondary: var(--neutral-600);
+  --bg-page: #ffffff;
+  --bg-subtle: var(--neutral-25);
+  --border: var(--neutral-200);
+  --border-subtle: var(--neutral-100);
+
+  /* --- Gradients --- */
+  --grad-brand: linear-gradient(135deg, #0d519b 0%, #2a78c2 55%, #78b833 100%);
+  --grad-deep: linear-gradient(180deg, #062649 0%, #0a4280 100%);
+  --grad-brand-soft: linear-gradient(135deg, #eaf2fb 0%, #f1f8e7 100%);
+
+  /* --- Type families --- */
+  --font-display: "Sora", system-ui, sans-serif;
+  --font-body: "Manrope", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* --- Type scale --- */
+  --fs-hero: 72px;
+  --lh-hero: 1.05;
+  --fs-section: 48px;
+  --lh-section: 1.1;
+  --fs-page: 36px;
+  --lh-page: 1.15;
+  --fs-h3: 24px;
+  --lh-h3: 1.25;
+  --fs-lead: 20px;
+  --lh-lead: 1.4;
+  --fs-subhead: 18px;
+  --lh-subhead: 1.5;
+  --fs-body: 16px;
+  --lh-body: 1.5;
+  --fs-small: 14px;
+  --lh-small: 1.5;
+  --fs-caption: 12px;
+  --lh-caption: 1.4;
+  --fs-eyebrow: 12px;
+  --lh-eyebrow: 1.4;
+  --tracking-eyebrow: 0.12em;
+
+  /* --- Radii --- */
+  --radius-button: 10px;
+  --radius-card: 14px;
+  --radius-hero: 24px;
+
+  /* --- Shadows --- */
+  --shadow-sm: 0 1px 2px rgba(13, 81, 155, 0.08);
+  --shadow-md: 0 4px 12px rgba(13, 81, 155, 0.1);
+  --shadow-lg: 0 12px 32px rgba(13, 81, 155, 0.14);
+
+  /* --- Motion --- */
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 240ms;
+  --dur-4: 360ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* --- Layout --- */
+  --max-marketing: 1120px;
+  --max-product: 1280px;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text-primary);
+  background: var(--bg-page);
+}
+
+/* ==========================================================================
+   Base typography utility classes
+   ========================================================================== */
+.ef-hero {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: var(--fs-hero);
+  line-height: var(--lh-hero);
+}
+.ef-section {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--fs-section);
+  line-height: var(--lh-section);
+}
+.ef-page {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--fs-page);
+  line-height: var(--lh-page);
+}
+.ef-h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--fs-h3);
+  line-height: var(--lh-h3);
+}
+.ef-lead {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: var(--fs-lead);
+  line-height: var(--lh-lead);
+  color: var(--text-secondary);
+}
+.ef-subhead {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--fs-subhead);
+  line-height: var(--lh-subhead);
+}
+.ef-body {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+.ef-small {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+.ef-caption {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  color: var(--text-secondary);
+}
+.ef-eyebrow {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: var(--fs-eyebrow);
+  line-height: var(--lh-eyebrow);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-eyebrow);
+  color: var(--blue-500);
+}
+.ef-accent {
+  color: var(--green-500);
+}
+
+/* ==========================================================================
+   Buttons
+   ========================================================================== */
+.ef-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--fs-small);
+  border-radius: var(--radius-button);
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background var(--dur-2) var(--ease-out),
+    transform var(--dur-1) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
+}
+.ef-btn:active {
+  transform: translateY(1px);
+}
+.ef-btn-primary {
+  background: var(--blue-500);
+  color: #fff;
+}
+.ef-btn-primary:hover {
+  background: var(--blue-600);
+}
+.ef-btn-secondary {
+  background: #fff;
+  color: var(--blue-500);
+  border-color: var(--blue-500);
+}
+.ef-btn-secondary:hover {
+  background: var(--blue-50);
+}
+.ef-btn-text {
+  background: transparent;
+  color: var(--blue-500);
+  padding-left: 4px;
+  padding-right: 4px;
+}
+.ef-btn-text:hover {
+  text-decoration: underline;
+}
+.ef-btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+.ef-btn-danger:hover {
+  background: #be2d34;
+}
+.ef-btn:disabled,
+.ef-btn-disabled {
+  background: var(--blue-200);
+  color: #fff;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ==========================================================================
+   Badges
+   ========================================================================== */
+.ef-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--fs-caption);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.ef-badge-info {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.ef-badge-success {
+  background: var(--success-soft);
+  color: var(--green-700);
+}
+.ef-badge-warning {
+  background: var(--warning-soft);
+  color: #9a6c0c;
+}
+.ef-badge-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.ef-badge-neutral {
+  background: var(--neutral-100);
+  color: var(--neutral-700);
+}
+.ef-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ==========================================================================
+   Cards
+   ========================================================================== */
+.ef-card {
+  background: #fff;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+  transition:
+    transform var(--dur-2) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out);
+}
+.ef-card-stat {
+  background: var(--grad-brand);
+  color: #fff;
+  border-radius: var(--radius-card);
+  padding: 28px;
+  border: none;
+}
+.ef-card-stat .ef-stat-number {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: var(--fs-section);
+  line-height: 1;
+}
+
+/* ==========================================================================
+   Hero panel
+   ========================================================================== */
+.ef-hero-panel {
+  background: var(--grad-deep);
+  color: #fff;
+  border-radius: var(--radius-hero);
+  padding: 56px;
+}
+
+/* ==========================================================================
+   Form fields
+   ========================================================================== */
+.ef-label {
+  display: block;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--fs-small);
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.ef-input {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  color: var(--text-primary);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  padding: 10px 14px;
+  transition:
+    border-color var(--dur-2) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out);
+}
+.ef-input:focus {
+  outline: none;
+  border-color: var(--blue-500);
+  box-shadow: 0 0 0 3px var(--blue-50);
+}
+.ef-input::placeholder {
+  color: var(--neutral-400);
+}
+
+/* ==========================================================================
+   Layout helpers
+   ========================================================================== */
+.ef-container-marketing {
+  max-width: var(--max-marketing);
+  margin-inline: auto;
+  padding-inline: 24px;
+}
+.ef-container-product {
+  max-width: var(--max-product);
+  margin-inline: auto;
+  padding-inline: 24px;
+}
+
+/* ==========================================================================
+   Entrance animation
+   ========================================================================== */
+@keyframes ef-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.ef-rise {
+  animation: ef-rise var(--dur-3) var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
