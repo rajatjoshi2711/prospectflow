@@ -46,12 +46,12 @@ export function NavShell({
   const pathname = usePathname();
 
   return (
-    <div className="flex min-h-screen" style={{ background: "var(--bg-subtle)" }}>
+    <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg-subtle)" }}>
       <aside
-        className="flex w-64 shrink-0 flex-col border-r"
+        className="flex h-screen w-64 shrink-0 flex-col border-r"
         style={{ borderColor: "var(--border-subtle)", background: "#fff" }}
       >
-        <div className="flex items-center gap-2 px-5 py-5">
+        <div className="flex shrink-0 items-center gap-2 px-5 py-4">
           <div
             aria-hidden
             className="flex h-8 w-8 items-center justify-center rounded-[8px]"
@@ -71,16 +71,19 @@ export function NavShell({
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-2">
-          <div className="ef-eyebrow px-2 pb-2 pt-2">Workspace</div>
-          <ul className="flex flex-col gap-1">
+        {/* Compact enough to fit a full nav (workspace + admin) without scrolling
+            on a standard viewport; overflow-y-auto stays only as a safety valve
+            for very short windows so items can never become unreachable. */}
+        <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-1">
+          <div className="ef-eyebrow px-2 pb-1 pt-1">Workspace</div>
+          <ul className="flex flex-col gap-0.5">
             {MAIN_NAV.map((item) => {
               const active = isActive(pathname, item.href);
               return (
                 <li key={item.href}>
                   <Link
                     href={item.href}
-                    className="ef-small block rounded-[8px] px-3 py-2 transition-colors"
+                    className="ef-small block rounded-[8px] px-3 py-1.5 transition-colors"
                     style={{
                       color: active ? "var(--blue-500)" : "var(--text-primary)",
                       background: active ? "var(--blue-50)" : "transparent",
@@ -96,15 +99,15 @@ export function NavShell({
 
           {role === "ADMIN" ? (
             <>
-              <div className="ef-eyebrow px-2 pb-2 pt-6">Admin</div>
-              <ul className="flex flex-col gap-1">
+              <div className="ef-eyebrow px-2 pb-1 pt-4">Admin</div>
+              <ul className="flex flex-col gap-0.5">
                 {ADMIN_NAV.map((item) => {
                   const active = isActive(pathname, item.href);
                   return (
                     <li key={item.href}>
                       <Link
                         href={item.href}
-                        className="ef-small block rounded-[8px] px-3 py-2 transition-colors"
+                        className="ef-small block rounded-[8px] px-3 py-1.5 transition-colors"
                         style={{
                           color: active ? "var(--blue-500)" : "var(--text-primary)",
                           background: active ? "var(--blue-50)" : "transparent",
@@ -122,10 +125,10 @@ export function NavShell({
         </nav>
 
         <div
-          className="border-t px-4 py-4"
+          className="shrink-0 border-t px-4 py-3"
           style={{ borderColor: "var(--border-subtle)" }}
         >
-          <div className="mb-3">
+          <div className="mb-2">
             <div className="ef-small" style={{ fontWeight: 600 }}>
               {name}
             </div>
@@ -145,7 +148,9 @@ export function NavShell({
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto">
+      {/* min-w-0 keeps wide tables from stretching the flex row; the sidebar is
+          pinned by the parent's h-screen/overflow-hidden and only this scrolls. */}
+      <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="ef-container-product py-10">{children}</div>
       </main>
     </div>
