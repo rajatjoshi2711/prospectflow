@@ -7,11 +7,45 @@
  * `src/lib/ai/index.ts` plus one new implementation file — no caller changes.
  */
 
-export type LLMRole = "system" | "user" | "assistant";
+export type LLMRole = "system" | "user" | "assistant" | "tool";
 
 export type LLMMessage = {
   role: LLMRole;
   content: string;
+  /**
+   * Assistant turn only: the tool calls the model asked for. Echo these back
+   * verbatim on the next request — an OpenAI-compatible API rejects a `tool`
+   * message that does not answer a tool call in the immediately preceding
+   * assistant turn.
+   */
+  toolCalls?: LLMToolCall[];
+  /** `tool` role only: which `LLMToolCall.id` this message is the result of. */
+  toolCallId?: string;
+  /** `tool` role only: the name of the tool that produced the result. */
+  name?: string;
+};
+
+/**
+ * One tool the model may call, described with a JSON Schema object for its
+ * arguments.
+ *
+ * SCOPING IS NOT NEGOTIABLE HERE: a tool's parameter schema must never contain
+ * a userId, organizationId, or any other tenancy field. The model picks WHAT to
+ * ask; the server decides WHOSE data it runs against, and injects that itself.
+ * See `src/lib/prospect-ask/tools.ts`.
+ */
+export type LLMToolDefinition = {
+  name: string;
+  description: string;
+  /** JSON Schema (draft-07 subset) for the arguments object. */
+  parameters: Record<string, unknown>;
+};
+
+export type LLMToolCall = {
+  id: string;
+  name: string;
+  /** Raw JSON string as the model emitted it. Parse defensively. */
+  arguments: string;
 };
 
 export type LLMCompleteOptions = {
@@ -29,10 +63,28 @@ export type LLMCompleteOptions = {
   timeoutMs?: number;
   /** Abort signal, so a caller (or Inngest step) can cancel in flight. */
   signal?: AbortSignal;
+  /**
+   * Tools the model may call this turn. When present the completion may come
+   * back with `toolCalls` and an empty `content` — that is a normal, successful
+   * result, not an error.
+   */
+  tools?: LLMToolDefinition[];
+  /**
+   * `auto` (the default when tools are given) lets the model choose; `none`
+   * forces a plain text answer, which is how a tool-calling loop asks for the
+   * final summary once its call budget is spent.
+   */
+  toolChoice?: "auto" | "none";
 };
 
 export type LLMCompletion = {
   content: string;
+  /**
+   * Tool calls the model requested. Empty (or absent) on an ordinary answer.
+   * When this is non-empty, `content` is usually "" — do not treat that as the
+   * empty-completion failure case.
+   */
+  toolCalls?: LLMToolCall[];
   model: string;
   usage?: { promptTokens: number; completionTokens: number };
 };

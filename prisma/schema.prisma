@@ -35,21 +35,22 @@ model Organization {
 }
 
 model User {
-  id             String   @id @default(cuid())
-  email          String   @unique
+  id             String       @id @default(cuid())
+  email          String       @unique
   passwordHash   String
   name           String
-  role           Role     @default(MEMBER)
+  role           Role         @default(MEMBER)
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   lastImportAt   DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
-  importBatches             ImportBatch[]
-  campaigns                 Campaign[]
+  importBatches              ImportBatch[]
+  campaigns                  Campaign[]
   chatMessages               ChatMessage[]
   relationshipStrengthScores RelationshipStrengthScore[]
+  quickSuggestions           QuickSuggestion[]
 
   @@index([organizationId])
 }
@@ -66,29 +67,29 @@ enum ImportBatchStatus {
 }
 
 model ImportBatch {
-  id        String            @id @default(cuid())
-  userId    String
-  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status    ImportBatchStatus @default(PENDING)
-  blobUrl   String
-  fileCount Int?
+  id           String            @id @default(cuid())
+  userId       String
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status       ImportBatchStatus @default(PENDING)
+  blobUrl      String
+  fileCount    Int?
   errorMessage String?
   /// Display name of the account owner for this export, resolved at ingestion
   /// time from Profile.csv when present, else from `User.name`. Used to decide
   /// which party in a message/invitation is the counterparty. Null on batches
   /// imported before this field existed.
-  ownerName String?
+  ownerName    String?
   /// `computeNameKey(ownerName)` — precomputed so counterparty resolution never
   /// has to re-normalize at query time.
   ownerNameKey String?
-  createdAt DateTime          @default(now())
-  completedAt DateTime?
+  createdAt    DateTime          @default(now())
+  completedAt  DateTime?
 
-  connections  Connection[]
-  positions    Position[]
-  invitations  Invitation[]
-  messages     MessageRecord[]
-  rawCsvRows   RawCsvRow[]
+  connections Connection[]
+  positions   Position[]
+  invitations Invitation[]
+  messages    MessageRecord[]
+  rawCsvRows  RawCsvRow[]
 
   jobChangeEventsAsPrevious JobChangeEvent[] @relation("PreviousBatch")
   jobChangeEventsAsCurrent  JobChangeEvent[] @relation("CurrentBatch")
@@ -98,7 +99,7 @@ model ImportBatch {
 }
 
 model Connection {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
   importBatchId String
   importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
   /// Strong key: `url:<normalized profile url>`, else `fallback:sha256(...)`.
@@ -114,11 +115,12 @@ model Connection {
   position      String?
   connectedOn   DateTime?
   country       String?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime    @default(now())
 
-  prospectMatches           ProspectMatch[]
-  campaignLeads             CampaignLead[]
+  prospectMatches            ProspectMatch[]
+  campaignLeads              CampaignLead[]
   relationshipStrengthScores RelationshipStrengthScore[]
+  quickSuggestions           QuickSuggestion[]
 
   @@index([importBatchId])
   @@index([identityKey])
@@ -133,41 +135,41 @@ model Connection {
 /// changes are detected by diffing `Connection.company` / `Connection.position`
 /// between batches (see `diffJobChanges`), never from this table.
 model Position {
-  id            String   @id @default(cuid())
-  importBatchId String
-  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
-  identityKey   String
+  id             String      @id @default(cuid())
+  importBatchId  String
+  importBatch    ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  identityKey    String
   /// Always true for rows ingested from `Positions.csv`. Present so the
   /// "these are the owner's jobs, not a connection's" fact is queryable and
   /// this table is never mistaken for connection history again.
-  isAccountOwner Boolean @default(true)
-  companyName   String?
-  title         String?
-  location      String?
-  startedOn     DateTime?
-  finishedOn    DateTime?
-  createdAt     DateTime @default(now())
+  isAccountOwner Boolean     @default(true)
+  companyName    String?
+  title          String?
+  location       String?
+  startedOn      DateTime?
+  finishedOn     DateTime?
+  createdAt      DateTime    @default(now())
 
   @@index([importBatchId])
   @@index([identityKey])
 }
 
 model Invitation {
-  id            String   @id @default(cuid())
-  importBatchId String
-  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  id               String      @id @default(cuid())
+  importBatchId    String
+  importBatch      ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
   /// Keyed to the COUNTERPARTY (the other person, not the account owner).
-  identityKey   String
+  identityKey      String
   /// Weak key for the counterparty: `name:<normalized display name>`.
-  nameKey       String?
+  nameKey          String?
   /// The counterparty's display name, as it appeared in the export.
   counterpartyName String?
-  direction     String?
-  from          String?
-  to            String?
-  sentAt        DateTime?
-  message       String?
-  createdAt     DateTime @default(now())
+  direction        String?
+  from             String?
+  to               String?
+  sentAt           DateTime?
+  message          String?
+  createdAt        DateTime    @default(now())
 
   @@index([importBatchId])
   @@index([identityKey])
@@ -175,27 +177,27 @@ model Invitation {
 }
 
 model MessageRecord {
-  id             String   @id @default(cuid())
-  importBatchId  String
-  importBatch    ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  id               String      @id @default(cuid())
+  importBatchId    String
+  importBatch      ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
   /// Keyed to the COUNTERPARTY, never to the account owner — so a conversation
   /// is retrievable by "who it is with" regardless of who sent each message.
   /// Direction is carried separately by `senderIsUser`.
-  identityKey    String
+  identityKey      String
   /// Weak key for the counterparty: `name:<normalized display name>`.
-  nameKey        String?
+  nameKey          String?
   /// The counterparty's display name, as it appeared in the export.
   counterpartyName String?
   /// True when the account owner sent this message. Null when the owner could
   /// not be identified (legacy rows, or an export with no Profile.csv and no
   /// usable `User.name`).
-  senderIsUser   Boolean?
-  conversationId String?
-  from           String?
-  to             String?
-  sentAt         DateTime?
-  content        String?
-  createdAt      DateTime @default(now())
+  senderIsUser     Boolean?
+  conversationId   String?
+  from             String?
+  to               String?
+  sentAt           DateTime?
+  content          String?
+  createdAt        DateTime    @default(now())
 
   @@index([importBatchId])
   @@index([identityKey])
@@ -204,12 +206,12 @@ model MessageRecord {
 }
 
 model RawCsvRow {
-  id             String   @id @default(cuid())
+  id             String      @id @default(cuid())
   importBatchId  String
   importBatch    ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
   sourceFilename String
   rowData        Json
-  createdAt      DateTime @default(now())
+  createdAt      DateTime    @default(now())
 
   @@index([importBatchId])
   @@index([sourceFilename])
@@ -219,23 +221,23 @@ model RawCsvRow {
 /// COMPLETE import batches for a user. Derived from `Connection` rows — the
 /// only place a connection's employer actually appears in a LinkedIn export.
 model JobChangeEvent {
-  id                String   @id @default(cuid())
+  id              String      @id @default(cuid())
   /// The `Connection.identityKey` of the person who moved.
-  identityKey       String
+  identityKey     String
   /// Denormalized display details, captured at detection time so the UI can
   /// render the alert without a second lookup (and so it still reads correctly
   /// if the person disappears from a later export).
-  personName        String?
-  linkedinUrl       String?
-  previousBatchId   String
-  previousBatch     ImportBatch @relation("PreviousBatch", fields: [previousBatchId], references: [id], onDelete: Cascade)
-  currentBatchId    String
-  currentBatch      ImportBatch @relation("CurrentBatch", fields: [currentBatchId], references: [id], onDelete: Cascade)
-  previousTitle     String?
-  previousCompany   String?
-  newTitle          String?
-  newCompany        String?
-  detectedAt        DateTime @default(now())
+  personName      String?
+  linkedinUrl     String?
+  previousBatchId String
+  previousBatch   ImportBatch @relation("PreviousBatch", fields: [previousBatchId], references: [id], onDelete: Cascade)
+  currentBatchId  String
+  currentBatch    ImportBatch @relation("CurrentBatch", fields: [currentBatchId], references: [id], onDelete: Cascade)
+  previousTitle   String?
+  previousCompany String?
+  newTitle        String?
+  newCompany      String?
+  detectedAt      DateTime    @default(now())
 
   @@index([identityKey])
   @@index([currentBatchId])
@@ -246,7 +248,7 @@ model JobChangeEvent {
 // ---------------------------------------------------------------------------
 
 model ICP {
-  id             String   @id @default(cuid())
+  id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
@@ -254,8 +256,8 @@ model ICP {
   industry       String?
   positions      String[]
   description    String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   prospectMatches ProspectMatch[]
 
@@ -263,14 +265,14 @@ model ICP {
 }
 
 model ChannelPartner {
-  id             String   @id @default(cuid())
+  id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
   industry       String?
   criteria       String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   prospectMatches ProspectMatch[]
 
@@ -294,18 +296,18 @@ enum MatchType {
 /// NULLs as distinct in unique indexes, so the two constraints below never
 /// collide with each other.
 model ProspectMatch {
-  id               String   @id @default(cuid())
+  id               String          @id @default(cuid())
   connectionId     String
-  connection       Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  connection       Connection      @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   matchType        MatchType
   icpId            String?
-  icp              ICP? @relation(fields: [icpId], references: [id], onDelete: Cascade)
+  icp              ICP?            @relation(fields: [icpId], references: [id], onDelete: Cascade)
   channelPartnerId String?
   channelPartner   ChannelPartner? @relation(fields: [channelPartnerId], references: [id], onDelete: Cascade)
   score            Int
   rationale        String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   @@unique([connectionId, icpId])
   @@unique([connectionId, channelPartnerId])
@@ -347,40 +349,40 @@ enum CampaignStatus {
 }
 
 model Campaign {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name      String
-  sourceFileName String?
-  status    CampaignStatus @default(PENDING)
+  id                  String         @id @default(cuid())
+  userId              String
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                String
+  sourceFileName      String?
+  status              CampaignStatus @default(PENDING)
   /// Vercel Blob URL of the uploaded spreadsheet. The store is private, so it
   /// is only ever read server-side via `get()` from `@vercel/blob`.
-  blobUrl   String?
+  blobUrl             String?
   /// The column the user CONFIRMED holds LinkedIn profile URLs. Null until
   /// confirmation; this — not `detectedColumn` — is what lead creation reads.
-  linkedinColumn String?
+  linkedinColumn      String?
   /// What detection proposed, kept alongside the confirmed value so an
   /// override stays visible/auditable.
-  detectedColumn String?
+  detectedColumn      String?
   detectionConfidence Float?
   /// "heuristic" | "heuristic-weak" | "llm" | "none" — see
   /// src/lib/campaigns/detect-column.ts.
-  detectionMethod String?
+  detectionMethod     String?
   /// Header row of the uploaded sheet, so the override picker can be rendered
   /// without re-downloading and re-parsing the blob.
-  columnHeaders String[]
+  columnHeaders       String[]
   /// The same sampled rows detection ran on, as `Record<string,string>[]`.
   /// Bounded to `DETECTION_SAMPLE_ROWS`, purely for the confirmation preview.
-  sampleRows Json?
-  leadCount Int?
+  sampleRows          Json?
+  leadCount           Int?
   /// How many leads resolved to a `Connection` in the user's latest completed
   /// import. Surfaced so "not yet scored" rows are explained rather than
   /// looking broken.
-  matchedLeadCount Int?
-  errorMessage String?
-  completedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  matchedLeadCount    Int?
+  errorMessage        String?
+  completedAt         DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 
   leads CampaignLead[]
 
@@ -393,11 +395,11 @@ model Campaign {
 }
 
 model CampaignLead {
-  id           String   @id @default(cuid())
+  id           String             @id @default(cuid())
   campaignId   String
-  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaign     Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   connectionId String?
-  connection   Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  connection   Connection?        @relation(fields: [connectionId], references: [id], onDelete: SetNull)
   linkedinUrl  String?
   firstName    String?
   lastName     String?
@@ -412,8 +414,8 @@ model CampaignLead {
   nameKey      String?
   status       CampaignLeadStatus @default(REQUEST_PENDING)
   rawRow       Json?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
 
   @@index([campaignId])
   @@index([connectionId])
@@ -426,30 +428,79 @@ model CampaignLead {
 // AI features
 // ---------------------------------------------------------------------------
 
+/// Relationship strength for ONE (user, connection) pair, 0-100.
+///
+/// Produced by the Phase 6 hybrid pipeline (src/lib/relationship): deterministic
+/// feature extraction from the user's ingested messages/invitations first, then
+/// an LLM turns that compact feature summary into a score + rationale. `factors`
+/// carries both the raw features and the human-readable reasons, so the UI can
+/// explain a score without re-deriving it.
+///
+/// IDEMPOTENCY: unique on (userId, connectionId), so a recompute upserts in
+/// place. `connectionId` points at a row in ONE import batch — the user's latest
+/// completed snapshot — which is the same batch every dashboard reads from.
+///
+/// ABSENCE IS MEANINGFUL: a connection with no message and no invitation is
+/// deliberately NOT scored. No row means "not yet scored", never zero.
 model RelationshipStrengthScore {
-  id           String   @id @default(cuid())
+  id           String     @id @default(cuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   connectionId String
   connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   score        Int
   factors      Json
-  computedAt   DateTime @default(now())
+  /// "ai" when the model produced the score, "heuristic" when the deterministic
+  /// fallback did (no GROQ_API_KEY, or the batch degraded). Surfaced in the UI
+  /// so an AI number is never passed off as a rule-based one or vice versa.
+  basis        String     @default("ai")
+  computedAt   DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
+  @@unique([userId, connectionId])
   @@index([userId])
   @@index([connectionId])
+  @@index([userId, score])
 }
 
+/// "Who should reach out to whom, for what" — org-wide, spanning every member's
+/// connection graph rather than one person's import.
+///
+/// `sourceUserId` is the org member who holds the relationship; `targetConnectionId`
+/// is the person they should approach. Both are FKs, so a suggestion cannot
+/// outlive the rows it names.
+///
+/// IDEMPOTENCY: unique on (organizationId, sourceUserId, targetConnectionId), so
+/// a nightly regeneration updates the existing row instead of stacking
+/// duplicates — and a suggestion the user dismissed STAYS dismissed across
+/// regenerations, because `dismissed` is never reset on update.
 model QuickSuggestion {
-  id             String   @id @default(cuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  title          String
-  description    String?
-  metadata       Json?
-  createdAt      DateTime @default(now())
+  id                 String       @id @default(cuid())
+  organizationId     String
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// The org member who should make the approach.
+  sourceUserId       String
+  sourceUser         User         @relation(fields: [sourceUserId], references: [id], onDelete: Cascade)
+  /// The connection to approach.
+  targetConnectionId String
+  targetConnection   Connection   @relation(fields: [targetConnectionId], references: [id], onDelete: Cascade)
+  title              String
+  /// One or two sentences: what to do and why now.
+  suggestionText     String
+  /// Grounding for the suggestion (matched ICP, relationship score, message
+  /// counts) so the UI can show what it was built from rather than asking the
+  /// reader to trust it.
+  metadata           Json?
+  dismissed          Boolean      @default(false)
+  dismissedAt        DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
 
+  @@unique([organizationId, sourceUserId, targetConnectionId])
   @@index([organizationId])
+  @@index([organizationId, dismissed, createdAt])
+  @@index([sourceUserId])
+  @@index([targetConnectionId])
 }
 
 model ChatMessage {
@@ -464,4 +515,7 @@ model ChatMessage {
 
   @@index([userId])
   @@index([conversationId])
+  /// A conversation is always replayed in order, scoped to its owner — this is
+  /// the index that read path actually uses.
+  @@index([userId, conversationId, createdAt])
 }

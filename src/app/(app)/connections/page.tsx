@@ -43,6 +43,7 @@ export default async function ConnectionsDashboardPage({
   }
 
   const { rows, total, page } = await fetchProspectPage({
+    userId: session.userId,
     importBatchId: batch.id,
     page: params.page,
     sort: params.sort,

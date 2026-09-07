@@ -4,6 +4,7 @@ import type { CampaignLeadStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { deriveRelationshipStrength } from "@/lib/insights/relationship";
 import { loadInteractionSignals } from "@/lib/insights/load-signals";
+import { loadStoredRelationshipScores } from "@/lib/insights/load-stored-scores";
 import { toPersonRef } from "@/lib/insights/signals";
 import { deriveLeadStatus } from "@/lib/insights/status";
 import { summarizeRawRow } from "@/lib/campaigns/fields";
@@ -167,6 +168,23 @@ export async function fetchCampaignLeadPage({
       )
     : null;
 
+  // Stored relationship scores are keyed by (user, connection). The owning user
+  // is read from the campaign itself rather than taken as a parameter, so this
+  // function keeps its single source of scoping (see the note on `campaignId`).
+  const owner =
+    linked.length > 0
+      ? await prisma.campaign.findUnique({
+          where: { id: campaignId },
+          select: { userId: true },
+        })
+      : null;
+  const storedScores = owner
+    ? await loadStoredRelationshipScores(
+        owner.userId,
+        linked.map((lead) => lead.connectionId!).filter(Boolean),
+      )
+    : new Map();
+
   const rows: CampaignLeadRow[] = leads.map((lead) => {
     const connection = lead.connection;
     const strength =
@@ -175,6 +193,9 @@ export async function fetchCampaignLeadPage({
             signals,
             identityKey: connection.identityKey,
             connectedOn: connection.connectedOn,
+            stored: (lead.connectionId
+              ? storedScores.get(lead.connectionId)
+              : null) ?? null,
           })
         : null;
 

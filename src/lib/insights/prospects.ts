@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { deriveRelationshipStrength } from "@/lib/insights/relationship";
 import { loadInteractionSignals } from "@/lib/insights/load-signals";
+import { loadStoredRelationshipScores } from "@/lib/insights/load-stored-scores";
 import { toPersonRef } from "@/lib/insights/signals";
 import { deriveLeadStatus } from "@/lib/insights/status";
 import type { ProspectRow, ProspectSortKey } from "@/components/prospect-table";
@@ -85,6 +86,7 @@ function buildOrderBy(
  * derived only for the rows on this page.
  */
 export async function fetchProspectPage({
+  userId,
   importBatchId,
   page,
   sort,
@@ -92,6 +94,12 @@ export async function fetchProspectPage({
   query,
   pageSize = PROSPECT_PAGE_SIZE,
 }: {
+  /**
+   * Owner of `importBatchId`. Required because relationship scores are stored
+   * per (user, connection): looking them up without the user filter would read
+   * another member's reading of the same person.
+   */
+  userId: string;
   importBatchId: string;
   page: number;
   sort: ProspectSortKey;
@@ -128,7 +136,13 @@ export async function fetchProspectPage({
   });
 
   const refs = connections.map(toPersonRef);
-  const signals = await loadInteractionSignals(importBatchId, refs);
+  const [signals, storedScores] = await Promise.all([
+    loadInteractionSignals(importBatchId, refs),
+    loadStoredRelationshipScores(
+      userId,
+      connections.map((connection) => connection.id),
+    ),
+  ]);
 
   const rows: ProspectRow[] = connections.map((connection, index) => {
     const identityKey = refs[index].identityKey;
@@ -136,6 +150,7 @@ export async function fetchProspectPage({
       signals,
       identityKey,
       connectedOn: connection.connectedOn,
+      stored: storedScores.get(connection.id) ?? null,
     });
     return {
       id: connection.id,

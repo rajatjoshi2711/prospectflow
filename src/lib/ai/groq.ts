@@ -4,7 +4,9 @@ import {
   LLMConfigurationError,
   type LLMCompleteOptions,
   type LLMCompletion,
+  type LLMMessage,
   type LLMProvider,
+  type LLMToolCall,
 } from "@/lib/ai/provider";
 
 /**
@@ -70,14 +72,24 @@ export function createGroqProvider(): LLMProvider {
         const response = await client.chat.completions.create(
           {
             model,
-            messages: options.messages.map((message) => ({
-              role: message.role,
-              content: message.content,
-            })),
+            messages: options.messages.map(toApiMessage),
             temperature: options.temperature ?? 0.2,
             max_tokens: options.maxTokens ?? 1024,
             ...(options.responseFormat === "json_object"
               ? { response_format: { type: "json_object" as const } }
+              : {}),
+            ...(options.tools && options.tools.length > 0
+              ? {
+                  tools: options.tools.map((tool) => ({
+                    type: "function" as const,
+                    function: {
+                      name: tool.name,
+                      description: tool.description,
+                      parameters: tool.parameters,
+                    },
+                  })),
+                  tool_choice: options.toolChoice ?? ("auto" as const),
+                }
               : {}),
           },
           {
@@ -86,13 +98,32 @@ export function createGroqProvider(): LLMProvider {
           },
         );
 
-        const content = response.choices?.[0]?.message?.content ?? "";
-        if (!content) {
+        const choice = response.choices?.[0]?.message;
+        const content = choice?.content ?? "";
+        // The SDK's union covers custom (non-function) tool calls too; we only
+        // ever send function tools, so anything without a function name is
+        // ignored rather than trusted.
+        const rawToolCalls = (choice?.tool_calls ?? []) as {
+          id?: string;
+          function?: { name?: string; arguments?: string };
+        }[];
+        const toolCalls: LLMToolCall[] = rawToolCalls
+          .filter((call) => typeof call.function?.name === "string")
+          .map((call) => ({
+            id: call.id ?? "",
+            name: call.function!.name as string,
+            arguments: call.function!.arguments ?? "{}",
+          }));
+
+        // A tool-calling turn legitimately returns no prose, so "empty" only
+        // counts as a failure when the model asked for nothing either.
+        if (!content && toolCalls.length === 0) {
           throw new LLMCallError("Groq returned an empty completion.", { retryable: true });
         }
 
         return {
           content,
+          toolCalls,
           model: response.model ?? model,
           usage: response.usage
             ? {
@@ -128,4 +159,33 @@ function toCallError(error: unknown): LLMCallError {
     error instanceof Error ? error.message : "Unknown error calling Groq.",
     { retryable: true },
   );
+}
+
+/**
+ * Maps our provider-agnostic message onto the OpenAI wire shape.
+ *
+ * A `tool` message must carry the `tool_call_id` it answers, and an assistant
+ * message that requested tools must carry those requests back verbatim —
+ * otherwise the API rejects the whole conversation on the next turn.
+ */
+function toApiMessage(message: LLMMessage): OpenAI.Chat.ChatCompletionMessageParam {
+  if (message.role === "tool") {
+    return {
+      role: "tool",
+      content: message.content,
+      tool_call_id: message.toolCallId ?? "",
+    };
+  }
+  if (message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0) {
+    return {
+      role: "assistant",
+      content: message.content || null,
+      tool_calls: message.toolCalls.map((call) => ({
+        id: call.id,
+        type: "function" as const,
+        function: { name: call.name, arguments: call.arguments },
+      })),
+    };
+  }
+  return { role: message.role, content: message.content } as OpenAI.Chat.ChatCompletionMessageParam;
 }

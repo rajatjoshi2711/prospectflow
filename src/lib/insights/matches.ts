@@ -4,6 +4,7 @@ import type { MatchType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { deriveRelationshipStrength } from "@/lib/insights/relationship";
 import { loadInteractionSignals } from "@/lib/insights/load-signals";
+import { loadStoredRelationshipScores } from "@/lib/insights/load-stored-scores";
 import { toPersonRef } from "@/lib/insights/signals";
 import { deriveLeadStatus } from "@/lib/insights/status";
 import type { ProspectRow } from "@/components/prospect-table";
@@ -123,6 +124,7 @@ export type MatchRow = ProspectRow & {
 /** One page of matches, with counts, for `ProspectTable`. */
 export async function fetchMatchPage({
   matchType,
+  userId,
   importBatchId,
   organizationId,
   page,
@@ -133,6 +135,8 @@ export async function fetchMatchPage({
   pageSize = MATCH_PAGE_SIZE,
 }: {
   matchType: MatchType;
+  /** Owner of `importBatchId`; scopes the stored relationship-score lookup. */
+  userId: string;
   importBatchId: string;
   organizationId: string;
   page: number;
@@ -177,9 +181,17 @@ export async function fetchMatchPage({
     },
   });
 
-  // Signals are loaded once for exactly the people on this page.
+  // Signals and stored scores are loaded once for exactly the people on this
+  // page. The stored score lookup is filtered by `userId` — a match row is
+  // org-visible, but the relationship behind it belongs to one member.
   const refs = matches.map((match) => toPersonRef(match.connection));
-  const signals = await loadInteractionSignals(importBatchId, refs);
+  const [signals, storedScores] = await Promise.all([
+    loadInteractionSignals(importBatchId, refs),
+    loadStoredRelationshipScores(
+      userId,
+      matches.map((match) => match.connection.id),
+    ),
+  ]);
 
   const rows: MatchRow[] = matches.map((match, index) => {
     const identityKey = refs[index].identityKey;
@@ -187,6 +199,7 @@ export async function fetchMatchPage({
       signals,
       identityKey,
       connectedOn: match.connection.connectedOn,
+      stored: storedScores.get(match.connection.id) ?? null,
     });
     return {
       id: match.id,

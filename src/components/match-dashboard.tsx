@@ -96,6 +96,7 @@ export async function MatchDashboard({
 
   const { rows, total, page } = await fetchMatchPage({
     matchType,
+    userId,
     importBatchId: batch.id,
     organizationId,
     page: params.page,

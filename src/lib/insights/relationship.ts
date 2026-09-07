@@ -3,26 +3,44 @@ import { getSignal, type InteractionSignalMap } from "@/lib/insights/signals";
 /**
  * Relationship strength, 0-100.
  *
- * The real score lives in `RelationshipStrengthScore` and is produced by the
- * Phase 6 hybrid pipeline (rule-based feature extraction -> LLM scoring +
- * explanation). Until that lands, this module computes a transparent,
- * deterministic heuristic from signals that were genuinely ingested. It never
- * fabricates a number: if the export contained no message or invitation data
- * at all, it returns `null` and the UI renders an explicit "not yet scored"
- * state.
+ * THREE OUTCOMES, and the distinction between them is the whole point:
  *
- * TODO(Phase 6): replace `deriveRelationshipStrength` with a lookup against
- * `RelationshipStrengthScore` for the connection, falling back to this
- * heuristic only while a score has not been computed yet. This file is the one
- * place that needs to change.
+ *   1. A stored `RelationshipStrengthScore` exists  -> return it, basis `ai`
+ *      (or `heuristic` if the pipeline itself degraded). Produced by the Phase 6
+ *      hybrid pipeline in `src/lib/relationship`.
+ *   2. No stored score, but this import DID carry interaction data -> fall back
+ *      to the transparent deterministic heuristic below, basis `heuristic`. This
+ *      covers the window between an import completing and the scoring job
+ *      finishing, and the tail of connections beyond the scoring job's cap.
+ *   3. No stored score and no interaction data at all -> `null`, and the UI
+ *      renders an explicit "not yet scored" state.
+ *
+ * Outcome 3 is load-bearing: a connection we know nothing about must never be
+ * shown as a zero, because zero reads as "a bad relationship" rather than "no
+ * data". Every caller treats `null` as unknown.
+ *
+ * This is the single place any surface derives relationship strength, so the
+ * connections, ICP, channel-partner and campaign views all upgraded together
+ * when the stored score landed.
  */
 
 export type RelationshipStrength = {
   score: number;
   /** Human-readable reasons, shown on hover. */
   factors: string[];
-  /** `heuristic` today; `ai` once Phase 6 populates RelationshipStrengthScore. */
-  basis: "heuristic";
+  /** `ai` when a stored model-produced score was used, `heuristic` otherwise. */
+  basis: "heuristic" | "ai";
+};
+
+/**
+ * A stored score, as loaded by `loadStoredRelationshipScores`. Kept structural
+ * (rather than importing the Prisma row type) so this module stays pure and
+ * usable from anywhere.
+ */
+export type StoredRelationshipScore = {
+  score: number;
+  factors: string[];
+  basis: "heuristic" | "ai";
 };
 
 const MAX_MESSAGE_POINTS = 40;
@@ -32,14 +50,29 @@ export function deriveRelationshipStrength({
   signals,
   identityKey,
   connectedOn,
+  stored,
   now = new Date(),
 }: {
   signals: InteractionSignalMap;
   /** The connection's `identityKey` (see `toPersonRef`). */
   identityKey: string;
   connectedOn?: Date | null;
+  /**
+   * The stored score for this connection, when one has been computed. Always
+   * wins over the heuristic — it was produced from strictly more information
+   * (reply ratios, thread structure, call detection) than this function sees.
+   */
+  stored?: StoredRelationshipScore | null;
   now?: Date;
 }): RelationshipStrength | null {
+  if (stored) {
+    return {
+      score: Math.max(0, Math.min(100, Math.round(stored.score))),
+      factors: stored.factors.length > 0 ? stored.factors : ["Scored from interaction history"],
+      basis: stored.basis,
+    };
+  }
+
   if (!signals.hasAnyInteractionData) {
     // No messages.csv and no Invitations.csv in this import — we genuinely
     // cannot say anything about relationship strength.

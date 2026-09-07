@@ -469,9 +469,36 @@ export const processImport = inngest.createFunction(
       return { sent: true };
     });
 
-    // TODO(Phase 6): trigger relationship-strength recompute and
-    // quick-suggestion regeneration for this user/org here once the AI
-    // pipeline lands (see build plan, phase 6 — "AI depth").
+    // Phase 6: relationship-strength scoring for this user, and org-wide quick
+    // suggestions (this member's fresh snapshot changes who the org knows).
+    // Both go out as events, for the same reason match recompute does: a slow
+    // or failing AI provider must never hold up — or fail — an import whose
+    // data is already written and visible.
+    await step.run("request-ai-recompute", async () => {
+      const user = await prisma.user.findUnique({
+        where: { id: batch.userId },
+        select: { organizationId: true },
+      });
+      if (!user) return { sent: false };
+      await inngest.send([
+        {
+          name: "relationship/recompute.requested",
+          data: {
+            organizationId: user.organizationId,
+            userId: batch.userId,
+            reason: `import:${importBatchId}`,
+          },
+        },
+        {
+          name: "suggestions/recompute.requested",
+          data: {
+            organizationId: user.organizationId,
+            reason: `import:${importBatchId}`,
+          },
+        },
+      ]);
+      return { sent: true };
+    });
 
     return { importBatchId, status: "COMPLETE" };
   },

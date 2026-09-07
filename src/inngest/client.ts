@@ -52,4 +52,35 @@ export type CampaignLeadsRequestedEvent = {
   };
 };
 
+/**
+ * Asks for `RelationshipStrengthScore` rows to be recomputed (Phase 6).
+ *
+ * - `userId` set     -> just that user (sent after their import completes).
+ * - `userId` omitted -> every member of the org (used by the nightly sweep).
+ */
+export type RelationshipRecomputeEvent = {
+  name: "relationship/recompute.requested";
+  data: {
+    organizationId: string;
+    userId?: string;
+    /** Free-text provenance for the Inngest run log. */
+    reason?: string;
+  };
+};
+
+/**
+ * Asks for the org's `QuickSuggestion` rows to be regenerated (Phase 6).
+ *
+ * Always org-wide: a suggestion is "who in this org should approach whom", so
+ * it spans every member's graph and cannot be computed for one user in
+ * isolation. Sent after any member's import completes, and nightly by cron.
+ */
+export type QuickSuggestionsRecomputeEvent = {
+  name: "suggestions/recompute.requested";
+  data: {
+    organizationId: string;
+    reason?: string;
+  };
+};
+
 export const inngest = new Inngest({ id: "prospectflow" });
