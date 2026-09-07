@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { CountryBarChart, type CountryCount } from "@/components/country-bar-chart";
 import { getLatestCompleteBatch } from "@/lib/insights/prospects";
+import { fetchTopMatchesByCompany, type CompanyGroup } from "@/lib/insights/matches";
 
 const REMINDER_AFTER_DAYS = 15;
 const JOB_CHANGE_PREVIEW_LIMIT = 8;
@@ -79,6 +80,28 @@ export default async function DashboardPage() {
       if (name) namesByIdentity.set(match.identityKey, name);
     }
   }
+
+  // Phase 4: the two match boxes. Counting definitions separately from matches
+  // lets the cards tell "nobody has defined an ICP" apart from "defined, but
+  // nothing scored yet" — two very different things to act on.
+  const [icpCount, channelPartnerCount, topIcpGroups, topPartnerGroups] = await Promise.all([
+    prisma.iCP.count({ where: { organizationId: session.organizationId } }),
+    prisma.channelPartner.count({ where: { organizationId: session.organizationId } }),
+    batch
+      ? fetchTopMatchesByCompany({
+          matchType: "ICP",
+          importBatchId: batch.id,
+          organizationId: session.organizationId,
+        })
+      : Promise.resolve([]),
+    batch
+      ? fetchTopMatchesByCompany({
+          matchType: "CHANNEL_PARTNER",
+          importBatchId: batch.id,
+          organizationId: session.organizationId,
+        })
+      : Promise.resolve([]),
+  ]);
 
   const countries: CountryCount[] = countryGroups.flatMap((group) =>
     group.country ? [{ country: group.country, count: group._count.country }] : [],
@@ -197,13 +220,25 @@ export default async function DashboardPage() {
           )}
         </section>
 
-        <PhaseFourSlot
+        <TopMatchesCard
           title="Top 5 ICP fits"
-          description="Your connections that best match your organization's Ideal Customer Profiles, scored and explained."
+          href="/icps"
+          groups={topIcpGroups}
+          hasDefinitions={icpCount > 0}
+          hasImport={batch !== null}
+          isAdmin={session.role === "ADMIN"}
+          adminHref="/admin/icps"
+          noun="ICP"
         />
-        <PhaseFourSlot
+        <TopMatchesCard
           title="Top 5 channel partners"
-          description="Your connections that best match your organization's channel-partner criteria."
+          href="/channel-partners"
+          groups={topPartnerGroups}
+          hasDefinitions={channelPartnerCount > 0}
+          hasImport={batch !== null}
+          isAdmin={session.role === "ADMIN"}
+          adminHref="/admin/channel-partners"
+          noun="channel partner"
         />
       </div>
     </div>
@@ -233,27 +268,115 @@ function StatCard({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * Placeholder for a Phase 4 box. Kept visually consistent with the live cards
- * so the dashboard layout is final — Phase 4 only has to swap the body.
+ * Top five matches, GROUPED BY COMPANY.
+ *
+ * Three matched people at one target account is one opportunity, not three,
+ * so the card lists five companies and names everyone matched inside each.
+ * Every empty case is distinguished, because "no ICPs defined", "no import"
+ * and "defined but nothing scored yet" each need a different next step.
  */
-function PhaseFourSlot({ title, description }: { title: string; description: string }) {
+function TopMatchesCard({
+  title,
+  href,
+  groups,
+  hasDefinitions,
+  hasImport,
+  isAdmin,
+  adminHref,
+  noun,
+}: {
+  title: string;
+  href: string;
+  groups: CompanyGroup[];
+  hasDefinitions: boolean;
+  hasImport: boolean;
+  isAdmin: boolean;
+  adminHref: string;
+  noun: string;
+}) {
   return (
-    <section className="ef-card" style={{ background: "var(--bg-subtle)" }}>
+    <section className="ef-card">
       <div className="mb-1 flex items-center justify-between gap-3">
         <p className="ef-subhead">{title}</p>
-        <span className="ef-badge ef-badge-neutral">Next phase</span>
+        {groups.length > 0 ? (
+          <Link href={href} className="ef-btn ef-btn-text">
+            See more
+          </Link>
+        ) : null}
       </div>
-      <p className="ef-small" style={{ color: "var(--text-secondary)" }}>
-        {description}
-      </p>
-      <ul className="mt-4 flex flex-col gap-2" style={{ margin: 0, padding: 0, listStyle: "none" }} aria-hidden>
-        {[0, 1, 2].map((index) => (
-          <li
-            key={index}
-            style={{ height: 12, borderRadius: 6, background: "var(--neutral-100)", width: `${90 - index * 18}%` }}
-          />
-        ))}
-      </ul>
+      <p className="ef-caption mb-4">Grouped by company, highest match score first.</p>
+
+      {groups.length === 0 ? (
+        <p className="ef-small" style={{ color: "var(--text-secondary)" }}>
+          {!hasImport ? (
+            <>Upload a LinkedIn export and your {noun} matches show up here.</>
+          ) : !hasDefinitions ? (
+            isAdmin ? (
+              <>
+                No {noun}s defined yet, so nothing is being matched.{" "}
+                <Link href={adminHref} style={{ color: "var(--blue-500)" }}>
+                  Define one
+                </Link>{" "}
+                and every member&rsquo;s connections are scored automatically.
+              </>
+            ) : (
+              <>An admin needs to define a {noun} before matches can appear here.</>
+            )
+          ) : (
+            <>
+              Nothing scored yet. Matching runs in the background after each
+              import and whenever a {noun} changes — check back in a minute.
+            </>
+          )}
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-3" style={{ margin: 0, padding: 0, listStyle: "none" }}>
+          {groups.map((group) => (
+            <li
+              key={group.company}
+              className="border-t pt-3 first:border-t-0 first:pt-0"
+              style={{ borderColor: "var(--border-subtle)" }}
+            >
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="ef-small" style={{ fontWeight: 600 }}>
+                  {group.company}
+                </p>
+                <span className="ef-caption" style={{ whiteSpace: "nowrap" }}>
+                  {group.topScore} / 100
+                </span>
+              </div>
+              <p className="ef-caption">
+                {group.people.length} match
+                {group.people.length === 1 ? "" : "es"} · {group.people[0].definitionName}
+              </p>
+              <ul className="mt-1 flex flex-col gap-1" style={{ margin: 0, padding: 0, listStyle: "none" }}>
+                {group.people.slice(0, 3).map((person, index) => (
+                  <li key={`${person.name}-${index}`} className="ef-caption" title={person.rationale ?? undefined}>
+                    {person.linkedinUrl ? (
+                      <a
+                        href={person.linkedinUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: "var(--blue-500)" }}
+                      >
+                        {person.name}
+                      </a>
+                    ) : (
+                      person.name
+                    )}
+                    {person.position ? ` — ${person.position}` : null}
+                  </li>
+                ))}
+                {group.people.length > 3 ? (
+                  <li className="ef-caption" style={{ color: "var(--neutral-400)" }}>
+                    +{group.people.length - 3} more at this company
+                  </li>
+                ) : null}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

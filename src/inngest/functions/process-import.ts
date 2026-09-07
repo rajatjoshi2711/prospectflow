@@ -448,6 +448,27 @@ export const processImport = inngest.createFunction(
       await diffJobChanges(batch.userId, importBatchId);
     });
 
+    // Phase 4: re-score this user's fresh snapshot against the org's ICPs and
+    // channel partners. Sent as an event rather than called inline so a slow
+    // or failing AI provider can never hold up (or fail) an import that has
+    // already been written successfully.
+    await step.run("request-match-recompute", async () => {
+      const user = await prisma.user.findUnique({
+        where: { id: batch.userId },
+        select: { organizationId: true },
+      });
+      if (!user) return { sent: false };
+      await inngest.send({
+        name: "matches/recompute.requested",
+        data: {
+          organizationId: user.organizationId,
+          userId: batch.userId,
+          reason: `import:${importBatchId}`,
+        },
+      });
+      return { sent: true };
+    });
+
     // TODO(Phase 6): trigger relationship-strength recompute and
     // quick-suggestion regeneration for this user/org here once the AI
     // pipeline lands (see build plan, phase 6 — "AI depth").

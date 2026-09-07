@@ -19,7 +19,12 @@ import { LEAD_STATUS_BADGE_CLASS, LEAD_STATUS_LABEL } from "@/lib/insights/statu
  * page must never receive more than one page of rows.
  */
 
-export type ProspectSortKey = "name" | "company" | "connectedOn";
+/**
+ * `score` is used by the Phase 4 match dashboards, which sort by match score
+ * in the extra column. It is not offered as a header on views that have no
+ * score — `extraColumn.sortKey` opts a view in.
+ */
+export type ProspectSortKey = "name" | "company" | "connectedOn" | "score";
 
 export type ProspectRow = {
   id: string;
@@ -47,8 +52,11 @@ export type ProspectTableProps = {
   direction: "asc" | "desc";
   /** Current search term (name or company). */
   query: string;
-  /** Optional trailing column, e.g. Phase 4's "which ICP". */
-  extraColumn?: { header: string };
+  /**
+   * Optional trailing column, e.g. Phase 4's "which ICP". Give it a `sortKey`
+   * to make its header sortable like the built-in ones.
+   */
+  extraColumn?: { header: string; sortKey?: ProspectSortKey };
   /** Rendered instead of the table when `total` is 0. */
   emptyState?: ReactNode;
   /** Hide the search box for views that filter some other way. */
@@ -94,7 +102,11 @@ export function ProspectTable({
   }
 
   function toggleSort(key: ProspectSortKey) {
-    const nextDirection = sort === key && direction === "asc" ? "desc" : "asc";
+    // Scores read best high-first, names low-first, so each column starts in
+    // the direction people actually want.
+    const preferred = key === "score" ? "desc" : "asc";
+    const opposite = preferred === "asc" ? "desc" : "asc";
+    const nextDirection = sort === key && direction === preferred ? opposite : preferred;
     pushParams({ sort: key, dir: nextDirection, page: "1" });
   }
 
@@ -172,7 +184,16 @@ export function ProspectTable({
                   </th>
                   {extraColumn ? (
                     <th className="ef-small px-5 py-3" style={{ fontWeight: 700 }}>
-                      {extraColumn.header}
+                      {extraColumn.sortKey ? (
+                        <SortButton
+                          label={extraColumn.header}
+                          active={sort === extraColumn.sortKey}
+                          direction={direction}
+                          onClick={() => toggleSort(extraColumn.sortKey!)}
+                        />
+                      ) : (
+                        extraColumn.header
+                      )}
                     </th>
                   ) : null}
                 </tr>

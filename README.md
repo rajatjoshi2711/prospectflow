@@ -47,7 +47,9 @@ cp .env.example .env
 | `BLOB_STORE_ID` / `VERCEL_OIDC_TOKEN` / `BLOB_WEBHOOK_PUBLIC_KEY` | Phase 2 | Vercel Blob, OIDC auth. Auto-injected by Vercel once the Blob store is connected to the project; run `vercel env pull` for local dev. See "Setting up Vercel Blob (OIDC)" below. `BLOB_READ_WRITE_TOKEN` is **not** required. |
 | `VERCEL_BLOB_CALLBACK_URL` | No — local testing only | Public tunnel URL so Vercel's `onUploadCompleted` webhook can reach your dev server. |
 | `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` | Phase 2 (prod only) | Not needed for local dev against `inngest-cli dev`; required once deployed so Inngest's cloud can reach your app. |
-| `GROQ_API_KEY` | No — Phase 6 | Not read by any code yet. |
+| `GROQ_API_KEY` | Phase 4 — optional | Groq API key for GPT-OSS-120B (`https://api.groq.com/openai/v1`), used to score and explain ICP / channel-partner matches. Get one at [console.groq.com/keys](https://console.groq.com/keys). **Without it the app still works**: matching falls back to the deterministic keyword pre-filter and labels each rationale "(AI scoring unavailable)". Nothing is instantiated at module load, so a missing key never breaks an unrelated route. |
+| `LLM_PROVIDER` | No | Selects the provider implementation in `src/lib/ai/index.ts`. Defaults to `groq`; that is the only value today. |
+| `GROQ_MODEL` | No | Overrides the model slug. Defaults to `openai/gpt-oss-120b` (the `openai/` prefix is part of Groq's model id, not a vendor switch). |
 
 ### 3. Set up the database
 
@@ -242,6 +244,47 @@ right filenames is enough:
    or company changed, a `JobChangeEvent` row appears and the "N job
    changes detected" badge shows on the newer batch.
 
+## How ICP / channel partner matching works
+
+Admins define ICPs (`/admin/icps`) and channel partners
+(`/admin/channel-partners`). Every member's connections are then scored
+against those definitions and the results land in `ProspectMatch`, which
+drives `/icps`, `/channel-partners`, and the two top-five boxes on the
+dashboard.
+
+Scoring is two-stage, because sending every connection to a model would be
+O(connections x definitions) calls:
+
+1. **Deterministic pre-filter** (`src/lib/matching/prefilter.ts`, CPU only, no
+   network). Every connection in the user's latest completed batch is scored
+   against each definition with string rules: exact position phrases, position
+   and industry keyword overlap, description vocabulary, and a hard country
+   exclusion (a connection with *no* country in the export is never excluded —
+   LinkedIn's `Connections.csv` frequently has none). Anything below the
+   shortlist threshold never reaches a model. The shortlist is capped at 120
+   candidates per definition.
+2. **LLM scoring** (`src/lib/matching/score.ts`). The shortlist goes to
+   GPT-OSS-120B in batches of ten in JSON mode, returning a 0-100 score and a
+   one-sentence rationale per candidate. Only matches scoring 40+ are stored.
+
+**Cost ceiling**: at most `definitions x 12` model calls per user per run,
+independent of network size. A batch that fails or comes back unparseable
+falls back to its pre-filter score rather than failing the run; with no
+`GROQ_API_KEY` at all, every score is the pre-filter's and is labelled as such.
+
+**Triggers**: `matches/recompute.requested`, sent (a) by `process-import`
+after an import completes, for that user, and (b) by the admin ICP /
+channel-partner API routes after a create or edit, for the whole org and
+narrowed to the changed definition. Deleting a definition needs no recompute —
+`ProspectMatch` cascades off its FK.
+
+**Idempotency**: `ProspectMatch` has unique constraints on
+`(connectionId, icpId)` and `(connectionId, channelPartnerId)`, and the job
+upserts on those pairs and then deletes every other row for that definition
+belonging to the user. Re-running produces the same table, never duplicates.
+The Inngest function is limited to one concurrent run per organization so two
+runs cannot prune each other's writes.
+
 ## Project structure
 
 ```
@@ -253,21 +296,33 @@ src/lib/auth/                 session, password hashing, org bootstrap, server a
 src/lib/ingestion/identity-key.ts  identityKey computation (LinkedIn URL or name+company hash)
 src/inngest/client.ts         Inngest client instance + event types
 src/inngest/functions/process-import.ts  unzip, parse, ingest, diff job changes
+src/inngest/functions/compute-matches.ts ICP / channel-partner scoring job
+src/lib/ai/provider.ts        LLMProvider interface + JSON parsing helpers
+src/lib/ai/groq.ts            Groq implementation (openai SDK, lazy client)
+src/lib/ai/index.ts           getLLMProvider() / tryGetLLMProvider()
+src/lib/matching/prefilter.ts deterministic shortlisting (no network)
+src/lib/matching/score.ts     batched LLM scoring of a shortlist
+src/lib/matching/run.ts       orchestration + idempotent upsert/prune
+src/lib/insights/matches.ts   reads ProspectMatch for the dashboards
 src/app/(auth)/login          /login
 src/app/(auth)/signup         /signup
 src/app/(app)/layout.tsx      authenticated nav shell
 src/app/(app)/dashboard       user dashboard (placeholder)
 src/app/(app)/org             org dashboard (placeholder)
-src/app/(app)/icps            all-ICPs dashboard (placeholder)
-src/app/(app)/channel-partners
+src/app/(app)/icps            all-ICPs dashboard (paginated, filterable)
+src/app/(app)/channel-partners all-channel-partners dashboard
 src/app/(app)/connections
 src/app/(app)/campaigns(+/new, +/[id])
 src/app/(app)/imports         fully functional: upload zip, version history
 src/app/(app)/prospect-ask
 src/app/(app)/admin/users     fully functional: list org users, promote/demote
-src/app/(app)/admin/icps(+[id])         placeholder, admin-gated
-src/app/(app)/admin/channel-partners(+[id]) placeholder, admin-gated
+src/app/(app)/admin/icps(+[id])         ICP CRUD, admin-gated
+src/app/(app)/admin/channel-partners(+[id]) channel partner CRUD, admin-gated
 src/app/api/admin/users/[id]/role/route.ts  PATCH — change a user's role
+src/app/api/admin/icps/route.ts             POST — create an ICP
+src/app/api/admin/icps/[id]/route.ts        PATCH / DELETE an ICP
+src/app/api/admin/channel-partners/route.ts POST — create a channel partner
+src/app/api/admin/channel-partners/[id]/route.ts PATCH / DELETE
 src/app/api/uploads/blob-token/route.ts     Vercel Blob client-upload authorization
 src/app/api/imports/route.ts                GET — current user's import batches (polling)
 src/app/api/inngest/route.ts                Inngest serve handler
@@ -304,13 +359,13 @@ the design system's own reference CSS.
 | `npm run prisma:generate` | Regenerate the Prisma client |
 | `npm run prisma:migrate` | Run `prisma migrate dev` against `DATABASE_URL` |
 
-## What's not in this phase
+## What's not built yet
 
-Dashboards backed by real data (beyond the imports page itself),
-ICP/channel-partner CRUD and matching, campaigns, relationship-strength
-scoring, quick suggestions, and ProspectAsk are all out of scope for Phases
-1–2. Their routes exist as styled "Coming soon" placeholders so navigation
-and the route structure are already in place for later phases. Job-change
-diffing (Phase 3's core feature) is implemented as part of the ingestion
-pipeline since it's a natural chained step after each import, but the
-dashboard/UI that surfaces those alerts is not built yet.
+Campaigns (Phase 5), and the relationship-strength AI pipeline, quick
+suggestions, org dashboard graph and ProspectAsk chatbot (Phase 6). Their
+routes exist as styled "Coming soon" placeholders so navigation and the route
+structure are already in place.
+
+Relationship strength shown on the dashboards is still the transparent
+heuristic from `src/lib/insights/relationship.ts`, not a stored
+`RelationshipStrengthScore`.

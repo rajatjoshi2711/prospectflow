@@ -277,10 +277,27 @@ model ChannelPartner {
   @@index([organizationId])
 }
 
+/// Which kind of definition a match was scored against. Redundant with
+/// `icpId`/`channelPartnerId` being set, but stored explicitly so dashboards
+/// can filter on one indexed column instead of a null-check.
+enum MatchType {
+  ICP
+  CHANNEL_PARTNER
+}
+
+/// A scored link between one `Connection` and one `ICP` or `ChannelPartner`.
+///
+/// IDEMPOTENCY: exactly one of `icpId` / `channelPartnerId` is set, and the
+/// pair (connection, definition) is UNIQUE. Re-scoring therefore upserts in
+/// place — re-running the matching job, or re-saving an ICP, updates the score
+/// and rationale rather than accumulating duplicate rows. Postgres treats
+/// NULLs as distinct in unique indexes, so the two constraints below never
+/// collide with each other.
 model ProspectMatch {
   id               String   @id @default(cuid())
   connectionId     String
   connection       Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  matchType        MatchType
   icpId            String?
   icp              ICP? @relation(fields: [icpId], references: [id], onDelete: Cascade)
   channelPartnerId String?
@@ -290,9 +307,12 @@ model ProspectMatch {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
+  @@unique([connectionId, icpId])
+  @@unique([connectionId, channelPartnerId])
   @@index([connectionId])
-  @@index([icpId])
-  @@index([channelPartnerId])
+  @@index([icpId, score])
+  @@index([channelPartnerId, score])
+  @@index([matchType, score])
 }
 
 // ---------------------------------------------------------------------------
