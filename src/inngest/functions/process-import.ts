@@ -3,6 +3,8 @@ import Papa from "papaparse";
 import yauzl from "yauzl";
 import { NonRetriableError } from "inngest";
 import { Prisma } from "@prisma/client";
+import { get } from "@vercel/blob";
+import { BLOB_ACCESS } from "@/lib/blob";
 import { inngest, type ImportBatchCreatedEvent } from "@/inngest/client";
 import { prisma } from "@/lib/prisma";
 import { computeIdentityKey } from "@/lib/ingestion/identity-key";
@@ -229,12 +231,15 @@ export const processImport = inngest.createFunction(
 
     try {
       const fileCount = await step.run("unzip-and-ingest", async () => {
-        const response = await fetch(batch.blobUrl);
-        if (!response.ok || !response.body) {
-          throw new Error(`Failed to download blob: ${response.status} ${response.statusText}`);
+        // Use the SDK rather than a bare fetch: it authenticates server-side
+        // (OIDC via VERCEL_OIDC_TOKEN + BLOB_STORE_ID), so this keeps working
+        // if the Blob store is private, where an unauthenticated fetch of the
+        // blob URL would 403.
+        const result = await get(batch.blobUrl, { access: BLOB_ACCESS });
+        if (!result?.stream) {
+          throw new Error(`Failed to download blob for batch ${importBatchId}`);
         }
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
+        const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
 
         return countAndProcessCsvEntries(buffer, importBatchId);
       });

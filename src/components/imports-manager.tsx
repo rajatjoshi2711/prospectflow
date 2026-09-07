@@ -1,7 +1,8 @@
 "use client";
 
-import { upload } from "@vercel/blob/client";
+import { uploadPresigned } from "@vercel/blob/client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { BLOB_ACCESS, MAX_UPLOAD_BYTES } from "@/lib/blob";
 
 export type ImportBatchRow = {
   id: string;
@@ -12,8 +13,6 @@ export type ImportBatchRow = {
   completedAt: string | null;
   jobChangeCount: number;
 };
-
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 const STATUS_BADGE: Record<ImportBatchRow["status"], { className: string; label: string }> = {
   PENDING: { className: "ef-badge-neutral", label: "Pending" },
@@ -65,8 +64,8 @@ export function ImportsManager({ initialBatches }: { initialBatches: ImportBatch
 
     setIsUploading(true);
     try {
-      await upload(file.name, file, {
-        access: "public",
+      await uploadPresigned(file.name, file, {
+        access: BLOB_ACCESS,
         handleUploadUrl: "/api/uploads/blob-token",
       });
       // The ImportBatch row is created server-side once the blob upload

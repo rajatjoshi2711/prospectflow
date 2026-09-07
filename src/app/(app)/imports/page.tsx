@@ -29,8 +29,8 @@ export default async function ImportsPage() {
       <p className="ef-eyebrow mb-2">Phase 2 — ingestion</p>
       <h1 className="ef-page mb-2">Imports</h1>
       <p className="ef-lead mb-8" style={{ maxWidth: 640 }}>
-        Upload your LinkedIn data export (the .zip you get from LinkedIn's
-        "Get a copy of your data") and browse every past import here. Each
+        Upload your LinkedIn data export (the .zip you get from LinkedIn&apos;s
+        &ldquo;Get a copy of your data&rdquo;) and browse every past import here. Each
         upload creates a new version — nothing is ever overwritten.
       </p>
       <ImportsManager

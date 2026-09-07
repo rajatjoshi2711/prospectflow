@@ -44,7 +44,8 @@ cp .env.example .env
 | --- | --- | --- |
 | `DATABASE_URL` | Phase 1 | Postgres connection string. Any Postgres works (local, Neon, Supabase, Vercel Postgres, etc.). |
 | `AUTH_SECRET` | Phase 1 | Random string used to sign session JWTs. Generate with `openssl rand -base64 32`. |
-| `BLOB_READ_WRITE_TOKEN` | Phase 2 | Vercel Blob read/write token. See "Getting a `BLOB_READ_WRITE_TOKEN`" below. |
+| `BLOB_STORE_ID` / `VERCEL_OIDC_TOKEN` / `BLOB_WEBHOOK_PUBLIC_KEY` | Phase 2 | Vercel Blob, OIDC auth. Auto-injected by Vercel once the Blob store is connected to the project; run `vercel env pull` for local dev. See "Setting up Vercel Blob (OIDC)" below. `BLOB_READ_WRITE_TOKEN` is **not** required. |
+| `VERCEL_BLOB_CALLBACK_URL` | No — local testing only | Public tunnel URL so Vercel's `onUploadCompleted` webhook can reach your dev server. |
 | `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` | Phase 2 (prod only) | Not needed for local dev against `inngest-cli dev`; required once deployed so Inngest's cloud can reach your app. |
 | `GROQ_API_KEY` | No — Phase 6 | Not read by any code yet. |
 
@@ -106,13 +107,15 @@ Open [http://localhost:3000](http://localhost:3000). You'll be redirected to
 ## How ingestion works
 
 1. **Upload.** On `/imports`, the user picks (or drops) a `.zip` file. The
-   client calls `upload()` from `@vercel/blob/client`, which uploads the
-   file directly to Vercel Blob (bypassing the serverless request body-size
-   limit) after getting a signed token from
+   client calls `uploadPresigned()` from `@vercel/blob/client`, which uploads
+   the file directly to Vercel Blob (bypassing the serverless request
+   body-size limit) after getting a presigned URL from
    `src/app/api/uploads/blob-token/route.ts`.
-2. **Authorization (`onBeforeGenerateToken`).** That route uses
-   `handleUpload` from `@vercel/blob/client` (server side). Before minting
-   an upload token it reads the real session from cookies
+2. **Authorization (`getSignedToken`).** That route uses
+   `handleUploadPresigned` from `@vercel/blob/client` (server side) together
+   with `issueSignedToken` from `@vercel/blob`, both of which authenticate
+   over OIDC. Before minting an upload token it reads the real session from
+   cookies
    (`getSession()`), rejects anything not ending in `.zip`, caps the size at
    50MB, and embeds `{ userId, organizationId }` from the *verified session*
    as `tokenPayload` — the client never gets to assert its own identity.
@@ -169,16 +172,43 @@ failures/retries for `process-import`. No `INNGEST_EVENT_KEY` /
 `INNGEST_SIGNING_KEY` are needed for this local flow — those only matter
 once you deploy and Inngest's cloud needs to authenticate with your app.
 
-### Getting a `BLOB_READ_WRITE_TOKEN`
+### Setting up Vercel Blob (OIDC)
+
+Vercel Blob authenticates with OIDC — there is no long-lived secret to
+store or rotate.
 
 1. In the [Vercel dashboard](https://vercel.com/dashboard), open (or create)
    the project this repo deploys as.
 2. Go to **Storage → Create Database → Blob**, create a store, and connect
    it to the project.
-3. Vercel adds `BLOB_READ_WRITE_TOKEN` to the project's environment
-   variables automatically. For local dev, either run `vercel env pull` in
-   a linked project, or copy the token from the store's dashboard into your
-   local `.env`.
+3. Vercel automatically injects `BLOB_STORE_ID`, `VERCEL_OIDC_TOKEN` and
+   `BLOB_WEBHOOK_PUBLIC_KEY` into the project's environment on every
+   deployment. It does **not** create a `BLOB_READ_WRITE_TOKEN`, and none is
+   needed: the app uses `handleUploadPresigned` / `uploadPresigned`, which
+   are the OIDC-compatible upload APIs.
+4. For local dev, run `vercel env pull` in a linked project to fetch those
+   three values into `.env.local`. `VERCEL_OIDC_TOKEN` is short-lived — if
+   uploads start failing locally with an auth error, re-run `vercel env pull`.
+
+`BLOB_WEBHOOK_PUBLIC_KEY` is what verifies the `onUploadCompleted` callback
+(Ed25519 over `x-vercel-signature`), replacing the read/write token's old
+role there. `src/lib/blob.ts` holds the store's access mode (`BLOB_ACCESS`)
+in one place — the browser upload and the server-side download in the
+Inngest worker both read it, so it must match the store's actual mode.
+
+#### Local-dev caveat: `onUploadCompleted` cannot reach localhost
+
+The upload-completed callback is sent by Vercel's infrastructure to your
+app, so it cannot reach `http://localhost:3000`. Uploading locally will put
+the file in Blob but no `ImportBatch` row will appear. To exercise the full
+flow locally, expose your dev server through a tunnel and point the callback
+at it:
+
+```bash
+ngrok http 3000
+# then in .env.local:
+VERCEL_BLOB_CALLBACK_URL="https://your-tunnel.ngrok-free.app"
+```
 
 ### Testing the full upload flow locally
 
@@ -196,7 +226,8 @@ right filenames is enough:
    Zip these into e.g. `test-export.zip`. There's no fixture checked into
    this repo yet (`test-fixtures/` is a reasonable place to add one if you
    build it, e.g. a small script that writes the CSVs above and zips them).
-2. With `DATABASE_URL`, `BLOB_READ_WRITE_TOKEN` set, `npm run dev` running,
+2. With `DATABASE_URL` and the Blob OIDC vars set (plus
+   `VERCEL_BLOB_CALLBACK_URL` pointing at a tunnel, see above), `npm run dev` running,
    and `npx inngest-cli@latest dev` running in another terminal, log in and
    go to `/imports`.
 3. Upload `test-export.zip`. Watch the version history row go

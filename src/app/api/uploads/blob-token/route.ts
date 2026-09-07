@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { handleUpload } from "@vercel/blob/client";
-import type { HandleUploadBody } from "@vercel/blob/client";
+import { issueSignedToken } from "@vercel/blob";
+import { handleUploadPresigned } from "@vercel/blob/client";
+import type { HandleUploadPresignedBody } from "@vercel/blob/client";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { inngest } from "@/inngest/client";
+import { MAX_UPLOAD_BYTES, ZIP_CONTENT_TYPES } from "@/lib/blob";
 
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50MB safety net (see build plan).
+// One hour of validity for the delegation + presigned URL, which comfortably
+// covers a 50MB upload on a slow connection.
+const TOKEN_TTL_MS = 60 * 60 * 1000;
 
 // Payload we thread through the direct-to-blob upload so the
 // onUploadCompleted callback (which runs server-side, without request
@@ -19,13 +23,17 @@ type UploadClientPayload = {
 };
 
 export async function POST(request: NextRequest) {
-  const body = (await request.json()) as HandleUploadBody;
+  const body = (await request.json()) as HandleUploadPresignedBody;
 
   try {
-    const jsonResponse = await handleUpload({
+    // OIDC-compatible presigned flow: authenticates against the Blob control
+    // plane with VERCEL_OIDC_TOKEN + BLOB_STORE_ID, and verifies the
+    // upload-completed webhook with BLOB_WEBHOOK_PUBLIC_KEY. No static
+    // BLOB_READ_WRITE_TOKEN is involved anywhere in this path.
+    const jsonResponse = await handleUploadPresigned({
       body,
       request,
-      onBeforeGenerateToken: async (pathname) => {
+      getSignedToken: async (pathname) => {
         // Validate the real session from cookies before minting an upload
         // token — this is the only trustworthy point to establish identity.
         const session = await getSession();
@@ -41,15 +49,26 @@ export async function POST(request: NextRequest) {
           organizationId: session.organizationId,
         };
 
-        return {
-          allowedContentTypes: [
-            "application/zip",
-            "application/x-zip-compressed",
-            "application/octet-stream",
-          ],
+        const validUntil = Date.now() + TOKEN_TTL_MS;
+
+        const token = await issueSignedToken({
+          pathname,
+          operations: ["put"],
+          allowedContentTypes: ZIP_CONTENT_TYPES,
           maximumSizeInBytes: MAX_UPLOAD_BYTES,
-          addRandomSuffix: true,
-          tokenPayload: JSON.stringify(clientPayload),
+          validUntil,
+        });
+
+        return {
+          token,
+          urlOptions: {
+            allowedContentTypes: ZIP_CONTENT_TYPES,
+            maximumSizeInBytes: MAX_UPLOAD_BYTES,
+            validUntil,
+            addRandomSuffix: true,
+            allowOverwrite: false,
+            tokenPayload: JSON.stringify(clientPayload),
+          },
         };
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {
