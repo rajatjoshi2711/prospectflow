@@ -19,8 +19,18 @@ import { getSignal, type InteractionSignalMap } from "@/lib/insights/signals";
  * lead has a real stored `CampaignLead.status`, pass it as `storedStatus` and
  * it always wins.
  *
- * TODO(Phase 5): once campaigns exist, prefer the stored CampaignLead status
- * for any connection that appears in one of the user's campaigns.
+ * PHASE 5 (campaigns) wires this up: `fetchCampaignLeadPage` passes every
+ * lead's stored `CampaignLead.status` as `storedStatus`, so a campaign lead
+ * always shows what the user set, and derivation only ever applies to plain
+ * connections. The campaign path routes through here rather than reading the
+ * column directly so status semantics stay in one file.
+ *
+ * NOT DONE, deliberately: the connections/ICP dashboards do NOT look up whether
+ * a connection also appears in some campaign. A campaign is one user's outreach
+ * push against one list; letting it rewrite the status shown on the whole
+ * network view would make "where does this relationship stand" depend on which
+ * campaign happened to touch the person last. Phase 6 can revisit that with
+ * ProspectAsk's cross-entity view if the need turns out to be real.
  */
 export function deriveLeadStatus({
   isConnected,

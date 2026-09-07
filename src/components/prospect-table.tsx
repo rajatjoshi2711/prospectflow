@@ -62,6 +62,16 @@ export type ProspectTableProps = {
   /** Hide the search box for views that filter some other way. */
   showSearch?: boolean;
   searchPlaceholder?: string;
+  /**
+   * Replaces the read-only status badge. Campaigns (Phase 5) pass an editable
+   * control here, because moving a lead through the outreach pipeline is the
+   * whole point of that view. Connections and match dashboards derive status
+   * from the import and have nothing to edit, so they omit it and keep the
+   * badge.
+   */
+  renderStatus?: (row: ProspectRow) => ReactNode;
+  /** Rendered above the table (e.g. campaign status filter chips). */
+  toolbar?: ReactNode;
 };
 
 const SORTABLE: { key: ProspectSortKey; label: string }[] = [
@@ -87,6 +97,8 @@ export function ProspectTable({
   emptyState,
   showSearch = true,
   searchPlaceholder = "Search by name or company…",
+  renderStatus,
+  toolbar,
 }: ProspectTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -151,6 +163,8 @@ export function ProspectTable({
           ) : null}
         </form>
       ) : null}
+
+      {toolbar}
 
       {total === 0 ? (
         emptyState ?? (
@@ -236,9 +250,13 @@ export function ProspectTable({
                       </td>
                       <td className="ef-small px-5 py-3">{row.company ?? "—"}</td>
                       <td className="px-5 py-3">
-                        <span className={`ef-badge ${LEAD_STATUS_BADGE_CLASS[row.status]}`}>
-                          {LEAD_STATUS_LABEL[row.status]}
-                        </span>
+                        {renderStatus ? (
+                          renderStatus(row)
+                        ) : (
+                          <span className={`ef-badge ${LEAD_STATUS_BADGE_CLASS[row.status]}`}>
+                            {LEAD_STATUS_LABEL[row.status]}
+                          </span>
+                        )}
                       </td>
                       <td className="px-5 py-3" style={{ minWidth: 180 }}>
                         <StrengthBar score={row.relationshipScore} factors={row.relationshipFactors} />

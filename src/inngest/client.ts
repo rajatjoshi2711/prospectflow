@@ -30,4 +30,26 @@ export type MatchesRecomputeEvent = {
   };
 };
 
+/**
+ * A campaign lead list finished uploading to Blob (Phase 5). Kicks off column
+ * detection, which parks the campaign in `AWAITING_CONFIRMATION`.
+ */
+export type CampaignFileUploadedEvent = {
+  name: "campaign/file.uploaded";
+  data: {
+    campaignId: string;
+  };
+};
+
+/**
+ * The user confirmed (or overrode) the LinkedIn-URL column. Kicks off the full
+ * parse, lead creation and connection linking.
+ */
+export type CampaignLeadsRequestedEvent = {
+  name: "campaign/leads.requested";
+  data: {
+    campaignId: string;
+  };
+};
+
 export const inngest = new Inngest({ id: "prospectflow" });

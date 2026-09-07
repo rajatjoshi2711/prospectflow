@@ -326,18 +326,70 @@ enum CampaignLeadStatus {
   CONVERSATION_ONGOING
 }
 
+/// Lifecycle of an uploaded lead list, mirroring `ImportBatchStatus` — with one
+/// extra state, because campaign ingestion deliberately pauses for a human.
+///
+///   PENDING               blob uploaded, detection queued
+///   DETECTING             background job is sampling the file
+///   AWAITING_CONFIRMATION detection finished; the user must confirm (or
+///                         override) the LinkedIn-URL column before any lead is
+///                         written. The detected column drives every downstream
+///                         match, so a silent wrong guess is costly.
+///   PROCESSING            confirmed; leads are being created and linked
+///   COMPLETE / FAILED     terminal
+enum CampaignStatus {
+  PENDING
+  DETECTING
+  AWAITING_CONFIRMATION
+  PROCESSING
+  COMPLETE
+  FAILED
+}
+
 model Campaign {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
   sourceFileName String?
+  status    CampaignStatus @default(PENDING)
+  /// Vercel Blob URL of the uploaded spreadsheet. The store is private, so it
+  /// is only ever read server-side via `get()` from `@vercel/blob`.
+  blobUrl   String?
+  /// The column the user CONFIRMED holds LinkedIn profile URLs. Null until
+  /// confirmation; this — not `detectedColumn` — is what lead creation reads.
+  linkedinColumn String?
+  /// What detection proposed, kept alongside the confirmed value so an
+  /// override stays visible/auditable.
+  detectedColumn String?
+  detectionConfidence Float?
+  /// "heuristic" | "heuristic-weak" | "llm" | "none" — see
+  /// src/lib/campaigns/detect-column.ts.
+  detectionMethod String?
+  /// Header row of the uploaded sheet, so the override picker can be rendered
+  /// without re-downloading and re-parsing the blob.
+  columnHeaders String[]
+  /// The same sampled rows detection ran on, as `Record<string,string>[]`.
+  /// Bounded to `DETECTION_SAMPLE_ROWS`, purely for the confirmation preview.
+  sampleRows Json?
+  leadCount Int?
+  /// How many leads resolved to a `Connection` in the user's latest completed
+  /// import. Surfaced so "not yet scored" rows are explained rather than
+  /// looking broken.
+  matchedLeadCount Int?
+  errorMessage String?
+  completedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   leads CampaignLead[]
 
   @@index([userId])
+  @@index([userId, createdAt])
+  /// The client looks its just-uploaded campaign up by the blob URL that
+  /// `uploadPresigned` returned (scoped to the session user), so this lookup
+  /// needs to be indexed.
+  @@index([blobUrl])
 }
 
 model CampaignLead {
@@ -350,6 +402,14 @@ model CampaignLead {
   firstName    String?
   lastName     String?
   company      String?
+  position     String?
+  /// Same key design as ingestion (src/lib/ingestion/identity-key.ts):
+  /// `identityKey` is `url:<normalized profile url>` when the sheet gave a
+  /// URL, `nameKey` is the weak name fallback. Stored rather than recomputed
+  /// so leads can be re-linked against a future import without re-parsing the
+  /// original spreadsheet.
+  identityKey  String?
+  nameKey      String?
   status       CampaignLeadStatus @default(REQUEST_PENDING)
   rawRow       Json?
   createdAt    DateTime @default(now())
@@ -357,6 +417,9 @@ model CampaignLead {
 
   @@index([campaignId])
   @@index([connectionId])
+  @@index([campaignId, status])
+  @@index([identityKey])
+  @@index([nameKey])
 }
 
 // ---------------------------------------------------------------------------
