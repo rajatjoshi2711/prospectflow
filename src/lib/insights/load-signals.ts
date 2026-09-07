@@ -5,18 +5,31 @@ import {
   blankSignal,
   type InteractionSignal,
   type InteractionSignalMap,
+  type PersonRef,
 } from "@/lib/insights/signals";
 
 /**
  * Loads message + invitation signals for a bounded set of people inside one
  * import batch. Always call this with the page of rows actually being
- * rendered (tens of names), never with the whole connection list.
+ * rendered (tens of people), never with the whole connection list.
+ *
+ * Messages and invitations are keyed to the counterparty at ingestion time, so
+ * this joins on the counterparty keys directly: `identityKey` (exact, URL
+ * based) with a `nameKey` fallback for the very common case where the export
+ * only names the counterparty. See `signals.ts` for the collision caveat on
+ * the name fallback.
+ *
+ * LEGACY ROWS: batches imported before this fix have `nameKey = null` and a
+ * counterparty-less `identityKey` (messages were keyed off the `From` name,
+ * whoever that was). Those rows simply fail to match and contribute no
+ * signals — they are never mis-attributed. Re-uploading the export re-keys
+ * them correctly.
  */
 export async function loadInteractionSignals(
   importBatchId: string,
-  names: string[],
+  people: PersonRef[],
 ): Promise<InteractionSignalMap> {
-  const wanted = new Set(names.filter((n) => n.length > 0));
+  const byKey = new Map<string, InteractionSignal>();
 
   const [messageCount, invitationCount] = await Promise.all([
     prisma.messageRecord.count({ where: { importBatchId } }),
@@ -24,75 +37,76 @@ export async function loadInteractionSignals(
   ]);
   const hasAnyInteractionData = messageCount > 0 || invitationCount > 0;
 
-  const byName = new Map<string, InteractionSignal>();
-  if (wanted.size === 0 || !hasAnyInteractionData) {
-    return { byName, hasAnyInteractionData };
+  if (people.length === 0 || !hasAnyInteractionData) {
+    return { byKey, hasAnyInteractionData };
   }
 
-  const nameFilters = [...wanted];
+  // identityKey / nameKey -> the connection identityKey to attribute to.
+  const byIdentity = new Map<string, string>();
+  const byNameKey = new Map<string, string>();
+  for (const person of people) {
+    byIdentity.set(person.identityKey, person.identityKey);
+    // First writer wins: if two connections on this page share a display name
+    // we cannot tell their name-keyed rows apart, so we attribute them to one
+    // rather than double-counting them onto both.
+    if (person.nameKey && !byNameKey.has(person.nameKey)) {
+      byNameKey.set(person.nameKey, person.identityKey);
+    }
+  }
+
+  const identityKeys = [...byIdentity.keys()];
+  const nameKeys = [...byNameKey.keys()];
+  const match = { OR: [{ identityKey: { in: identityKeys } }, { nameKey: { in: nameKeys } }] };
+
   const [messages, invitations] = await Promise.all([
     messageCount > 0
       ? prisma.messageRecord.findMany({
-          where: {
-            importBatchId,
-            OR: [
-              { from: { in: nameFilters, mode: "insensitive" } },
-              { to: { in: nameFilters, mode: "insensitive" } },
-            ],
-          },
-          select: { from: true, to: true, sentAt: true },
+          where: { importBatchId, ...match },
+          select: { identityKey: true, nameKey: true, senderIsUser: true, sentAt: true },
         })
       : Promise.resolve([]),
     invitationCount > 0
       ? prisma.invitation.findMany({
-          where: {
-            importBatchId,
-            OR: [
-              { from: { in: nameFilters, mode: "insensitive" } },
-              { to: { in: nameFilters, mode: "insensitive" } },
-            ],
-          },
-          select: { from: true, to: true, message: true },
+          where: { importBatchId, ...match },
+          select: { identityKey: true, nameKey: true, message: true },
         })
       : Promise.resolve([]),
   ]);
 
-  const norm = (value: string | null) =>
-    (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  const resolve = (row: { identityKey: string; nameKey: string | null }) =>
+    byIdentity.get(row.identityKey) ?? (row.nameKey ? byNameKey.get(row.nameKey) : undefined);
 
   for (const message of messages) {
-    const from = norm(message.from);
-    const to = norm(message.to);
+    const owner = resolve(message);
+    if (!owner) continue;
+    const signal = byKey.get(owner) ?? blankSignal();
 
-    if (wanted.has(from)) {
-      const signal = byName.get(from) ?? blankSignal();
-      signal.inboundMessages += 1;
-      if (message.sentAt && (!signal.lastMessageAt || message.sentAt > signal.lastMessageAt)) {
-        signal.lastMessageAt = message.sentAt;
-      }
-      byName.set(from, signal);
-    }
-    if (wanted.has(to)) {
-      const signal = byName.get(to) ?? blankSignal();
+    if (message.senderIsUser === true) {
       signal.outboundMessages += 1;
-      if (message.sentAt && (!signal.lastMessageAt || message.sentAt > signal.lastMessageAt)) {
-        signal.lastMessageAt = message.sentAt;
-      }
-      byName.set(to, signal);
+    } else if (message.senderIsUser === false) {
+      signal.inboundMessages += 1;
+    } else {
+      // Direction unknown: still evidence of a conversation, but it must not
+      // be counted as a reply.
+      signal.undirectedMessages += 1;
     }
+
+    if (message.sentAt && (!signal.lastMessageAt || message.sentAt > signal.lastMessageAt)) {
+      signal.lastMessageAt = message.sentAt;
+    }
+    byKey.set(owner, signal);
   }
 
   for (const invitation of invitations) {
-    for (const candidate of [norm(invitation.from), norm(invitation.to)]) {
-      if (!wanted.has(candidate)) continue;
-      const signal = byName.get(candidate) ?? blankSignal();
-      signal.hasInvitation = true;
-      if ((invitation.message ?? "").trim().length > 0) {
-        signal.hasInvitationNote = true;
-      }
-      byName.set(candidate, signal);
+    const owner = resolve(invitation);
+    if (!owner) continue;
+    const signal = byKey.get(owner) ?? blankSignal();
+    signal.hasInvitation = true;
+    if ((invitation.message ?? "").trim().length > 0) {
+      signal.hasInvitationNote = true;
     }
+    byKey.set(owner, signal);
   }
 
-  return { byName, hasAnyInteractionData };
+  return { byKey, hasAnyInteractionData };
 }

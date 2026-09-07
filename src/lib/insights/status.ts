@@ -25,22 +25,25 @@ import { getSignal, type InteractionSignalMap } from "@/lib/insights/signals";
 export function deriveLeadStatus({
   isConnected,
   signals,
-  name,
+  identityKey,
   storedStatus,
 }: {
   /** True when the person has a row in the current batch's Connections.csv. */
   isConnected: boolean;
   signals: InteractionSignalMap;
-  /** `normalizePersonName(firstName, lastName)`. */
-  name: string;
+  /** The connection's `identityKey` (see `toPersonRef`). */
+  identityKey: string;
   storedStatus?: CampaignLeadStatus | null;
 }): CampaignLeadStatus {
   if (storedStatus) return storedStatus;
 
-  const signal = getSignal(signals, name);
+  const signal = getSignal(signals, identityKey);
 
   if (signal.inboundMessages > 0) return "CONVERSATION_ONGOING";
   if (signal.outboundMessages > 0) return "FIRST_MESSAGE_SENT";
+  // Direction unknown but a thread exists — a conversation happened, we just
+  // cannot say who opened it.
+  if (signal.undirectedMessages > 0) return "CONVERSATION_ONGOING";
   if (isConnected) return "REQUEST_ACCEPTED";
   if (signal.hasInvitation) return "REQUEST_PENDING";
   return "REQUEST_PENDING";

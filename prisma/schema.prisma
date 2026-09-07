@@ -73,6 +73,14 @@ model ImportBatch {
   blobUrl   String
   fileCount Int?
   errorMessage String?
+  /// Display name of the account owner for this export, resolved at ingestion
+  /// time from Profile.csv when present, else from `User.name`. Used to decide
+  /// which party in a message/invitation is the counterparty. Null on batches
+  /// imported before this field existed.
+  ownerName String?
+  /// `computeNameKey(ownerName)` — precomputed so counterparty resolution never
+  /// has to re-normalize at query time.
+  ownerNameKey String?
   createdAt DateTime          @default(now())
   completedAt DateTime?
 
@@ -93,7 +101,11 @@ model Connection {
   id            String   @id @default(cuid())
   importBatchId String
   importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  /// Strong key: `url:<normalized profile url>`, else `fallback:sha256(...)`.
   identityKey   String
+  /// Weak key: `name:<normalized display name>`. Non-unique — see
+  /// src/lib/ingestion/identity-key.ts. Null on pre-existing rows.
+  nameKey       String?
   firstName     String?
   lastName      String?
   linkedinUrl   String?
@@ -110,13 +122,25 @@ model Connection {
 
   @@index([importBatchId])
   @@index([identityKey])
+  @@index([nameKey])
+  @@index([importBatchId, identityKey])
 }
 
+/// The ACCOUNT OWNER's own work history, from `Positions.csv`.
+///
+/// This is emphatically NOT the job history of the user's connections — a
+/// LinkedIn export only ever contains the owner's positions. Connection job
+/// changes are detected by diffing `Connection.company` / `Connection.position`
+/// between batches (see `diffJobChanges`), never from this table.
 model Position {
   id            String   @id @default(cuid())
   importBatchId String
   importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
   identityKey   String
+  /// Always true for rows ingested from `Positions.csv`. Present so the
+  /// "these are the owner's jobs, not a connection's" fact is queryable and
+  /// this table is never mistaken for connection history again.
+  isAccountOwner Boolean @default(true)
   companyName   String?
   title         String?
   location      String?
@@ -132,7 +156,12 @@ model Invitation {
   id            String   @id @default(cuid())
   importBatchId String
   importBatch   ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  /// Keyed to the COUNTERPARTY (the other person, not the account owner).
   identityKey   String
+  /// Weak key for the counterparty: `name:<normalized display name>`.
+  nameKey       String?
+  /// The counterparty's display name, as it appeared in the export.
+  counterpartyName String?
   direction     String?
   from          String?
   to            String?
@@ -142,13 +171,25 @@ model Invitation {
 
   @@index([importBatchId])
   @@index([identityKey])
+  @@index([nameKey])
 }
 
 model MessageRecord {
   id             String   @id @default(cuid())
   importBatchId  String
   importBatch    ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  /// Keyed to the COUNTERPARTY, never to the account owner — so a conversation
+  /// is retrievable by "who it is with" regardless of who sent each message.
+  /// Direction is carried separately by `senderIsUser`.
   identityKey    String
+  /// Weak key for the counterparty: `name:<normalized display name>`.
+  nameKey        String?
+  /// The counterparty's display name, as it appeared in the export.
+  counterpartyName String?
+  /// True when the account owner sent this message. Null when the owner could
+  /// not be identified (legacy rows, or an export with no Profile.csv and no
+  /// usable `User.name`).
+  senderIsUser   Boolean?
   conversationId String?
   from           String?
   to             String?
@@ -158,6 +199,7 @@ model MessageRecord {
 
   @@index([importBatchId])
   @@index([identityKey])
+  @@index([nameKey])
   @@index([conversationId])
 }
 
@@ -173,9 +215,18 @@ model RawCsvRow {
   @@index([sourceFilename])
 }
 
+/// A connection whose company or title differs between the two most recent
+/// COMPLETE import batches for a user. Derived from `Connection` rows — the
+/// only place a connection's employer actually appears in a LinkedIn export.
 model JobChangeEvent {
   id                String   @id @default(cuid())
+  /// The `Connection.identityKey` of the person who moved.
   identityKey       String
+  /// Denormalized display details, captured at detection time so the UI can
+  /// render the alert without a second lookup (and so it still reads correctly
+  /// if the person disappears from a later export).
+  personName        String?
+  linkedinUrl       String?
   previousBatchId   String
   previousBatch     ImportBatch @relation("PreviousBatch", fields: [previousBatchId], references: [id], onDelete: Cascade)
   currentBatchId    String

@@ -30,13 +30,13 @@ const POINTS_PER_MESSAGE = 4;
 
 export function deriveRelationshipStrength({
   signals,
-  name,
+  identityKey,
   connectedOn,
   now = new Date(),
 }: {
   signals: InteractionSignalMap;
-  /** `normalizePersonName(firstName, lastName)`. */
-  name: string;
+  /** The connection's `identityKey` (see `toPersonRef`). */
+  identityKey: string;
   connectedOn?: Date | null;
   now?: Date;
 }): RelationshipStrength | null {
@@ -46,11 +46,12 @@ export function deriveRelationshipStrength({
     return null;
   }
 
-  const signal = getSignal(signals, name);
+  const signal = getSignal(signals, identityKey);
   const factors: string[] = [];
   let score = 0;
 
-  const totalMessages = signal.inboundMessages + signal.outboundMessages;
+  const totalMessages =
+    signal.inboundMessages + signal.outboundMessages + signal.undirectedMessages;
   if (totalMessages > 0) {
     const points = Math.min(MAX_MESSAGE_POINTS, totalMessages * POINTS_PER_MESSAGE);
     score += points;

@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { deriveRelationshipStrength } from "@/lib/insights/relationship";
 import { loadInteractionSignals } from "@/lib/insights/load-signals";
-import { normalizePersonName } from "@/lib/insights/signals";
+import { toPersonRef } from "@/lib/insights/signals";
 import { deriveLeadStatus } from "@/lib/insights/status";
 import type { ProspectRow, ProspectSortKey } from "@/components/prospect-table";
 
@@ -116,6 +116,8 @@ export async function fetchProspectPage({
     take: pageSize,
     select: {
       id: true,
+      identityKey: true,
+      nameKey: true,
       firstName: true,
       lastName: true,
       company: true,
@@ -125,14 +127,14 @@ export async function fetchProspectPage({
     },
   });
 
-  const names = connections.map((c) => normalizePersonName(c.firstName, c.lastName));
-  const signals = await loadInteractionSignals(importBatchId, names);
+  const refs = connections.map(toPersonRef);
+  const signals = await loadInteractionSignals(importBatchId, refs);
 
   const rows: ProspectRow[] = connections.map((connection, index) => {
-    const name = names[index];
+    const identityKey = refs[index].identityKey;
     const strength = deriveRelationshipStrength({
       signals,
-      name,
+      identityKey,
       connectedOn: connection.connectedOn,
     });
     return {
@@ -142,7 +144,7 @@ export async function fetchProspectPage({
       company: connection.company,
       position: connection.position,
       linkedinUrl: connection.linkedinUrl,
-      status: deriveLeadStatus({ isConnected: true, signals, name }),
+      status: deriveLeadStatus({ isConnected: true, signals, identityKey }),
       relationshipScore: strength?.score ?? null,
       relationshipFactors: strength?.factors,
     };

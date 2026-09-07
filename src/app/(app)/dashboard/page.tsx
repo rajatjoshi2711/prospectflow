@@ -43,6 +43,7 @@ export default async function DashboardPage() {
       select: {
         id: true,
         identityKey: true,
+        personName: true,
         previousTitle: true,
         previousCompany: true,
         newTitle: true,
@@ -56,16 +57,18 @@ export default async function DashboardPage() {
     where: { currentBatch: { userId: session.userId } },
   });
 
-  // Resolve identityKeys to names where a matching connection exists in this
-  // user's data. Some will not resolve — Phase 2 derives Position.identityKey
-  // from a name hash while Connection.identityKey prefers the LinkedIn URL, so
-  // the two key spaces only overlap for URL-less rows. Those fall back to
-  // showing the company/title change on its own.
+  // Job changes are now detected by diffing Connection rows, so `personName`
+  // is captured at detection time and no lookup is normally needed. The lookup
+  // below only backfills the name for legacy events written by the old
+  // Position-based diff (which left `personName` null); those keys came from a
+  // different key space and mostly will not resolve, in which case the alert
+  // renders the role change on its own.
   const namesByIdentity = new Map<string, string>();
-  if (jobChanges.length > 0) {
+  const unresolved = jobChanges.filter((event) => !event.personName);
+  if (unresolved.length > 0) {
     const matches = await prisma.connection.findMany({
       where: {
-        identityKey: { in: jobChanges.map((event) => event.identityKey) },
+        identityKey: { in: unresolved.map((event) => event.identityKey) },
         importBatch: { userId: session.userId },
       },
       distinct: ["identityKey"],
@@ -174,7 +177,7 @@ export default async function DashboardPage() {
                   style={{ borderColor: "var(--border-subtle)" }}
                 >
                   <p className="ef-small" style={{ fontWeight: 600 }}>
-                    {namesByIdentity.get(event.identityKey) ?? "A connection"}
+                    {event.personName ?? namesByIdentity.get(event.identityKey) ?? "A connection"}
                   </p>
                   <p className="ef-caption">
                     {formatRole(event.previousTitle, event.previousCompany)}
