@@ -67,6 +67,23 @@ against a real database will apply it (or, if Prisma decides the migration
 history doesn't match, will prompt you to reset the dev database — safe to do
 since there's no data yet).
 
+#### Migrations on Vercel
+
+Production deploys apply migrations automatically. Vercel prefers the
+`vercel-build` script over `build`, and ours runs `prisma migrate deploy`
+before `next build`. A failed migration fails the build, so code is never
+deployed against a schema that was not applied.
+
+The migration step is gated on `VERCEL_ENV = production` on purpose. Preview
+deployments share the same `DATABASE_URL` as production in this setup, so
+running migrations from a branch build would mutate the production schema
+before that branch is merged. Previews therefore build against whatever schema
+production has already applied.
+
+This means a **local** schema change still needs `npm run prisma:migrate` to
+generate the migration file; the deploy only *applies* migrations that are
+already committed.
+
 ### 4. Run the dev server
 
 ```bash
