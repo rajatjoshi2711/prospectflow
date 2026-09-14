@@ -39,7 +39,9 @@ export async function PATCH(
 
   const result = await prisma.campaignLead.updateMany({
     where: { id: leadId, campaign: { id, userId: guard.session.userId } },
-    data: { status: parsed.data.status },
+    // Stamping this is what distinguishes a deliberate choice from the
+    // creation default, and is what lets it outrank derived status.
+    data: { status: parsed.data.status, statusSetAt: new Date() },
   });
 
   if (result.count === 0) {

@@ -424,6 +424,14 @@ model CampaignLead {
   identityKey  String?
   nameKey      String?
   status       CampaignLeadStatus @default(REQUEST_PENDING)
+  /// When the user last set `status` by hand. NULL means they never have, so
+  /// `status` still holds its creation default and carries no information.
+  ///
+  /// Without this the two are indistinguishable, and since every lead is
+  /// created as REQUEST_PENDING, a stored default would always win over the
+  /// status derived from real message history — pinning every lead to
+  /// "Connection request pending" forever.
+  statusSetAt  DateTime?
   rawRow       Json?
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt

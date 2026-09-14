@@ -143,6 +143,7 @@ export async function fetchCampaignLeadPage({
       position: true,
       linkedinUrl: true,
       status: true,
+      statusSetAt: true,
       rawRow: true,
       connectionId: true,
       connection: {
@@ -210,14 +211,15 @@ export async function fetchCampaignLeadPage({
       company: lead.company,
       position: lead.position,
       linkedinUrl: lead.linkedinUrl,
-      // A campaign lead always HAS a stored status — the user owns it — so
-      // `deriveLeadStatus` short-circuits to it. Routed through the shared
-      // helper anyway so status semantics live in exactly one place.
+      // Only a HAND-SET status counts as stored. `status` is non-nullable and
+      // defaults to REQUEST_PENDING, so passing it unconditionally would make
+      // the default outrank the real message history behind it and freeze
+      // every untouched lead at "Connection request pending".
       status: deriveLeadStatus({
         isConnected: connection !== null,
         signals: signals ?? { byKey: new Map(), hasAnyInteractionData: false },
         identityKey: connection?.identityKey ?? "",
-        storedStatus: lead.status,
+        storedStatus: lead.statusSetAt ? lead.status : null,
       }),
       relationshipScore: strength?.score ?? null,
       relationshipFactors: strength?.factors,

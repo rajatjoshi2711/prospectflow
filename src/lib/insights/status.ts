@@ -15,15 +15,16 @@ import { getSignal, type InteractionSignalMap } from "@/lib/insights/signals";
  *      connected) with no message history
  *   4. Only an invitation record exists              -> REQUEST_PENDING
  *
- * Nothing here is invented: every branch is backed by an ingested row. When a
- * lead has a real stored `CampaignLead.status`, pass it as `storedStatus` and
- * it always wins.
+ * Nothing here is invented: every branch is backed by an ingested row.
  *
- * PHASE 5 (campaigns) wires this up: `fetchCampaignLeadPage` passes every
- * lead's stored `CampaignLead.status` as `storedStatus`, so a campaign lead
- * always shows what the user set, and derivation only ever applies to plain
- * connections. The campaign path routes through here rather than reading the
- * column directly so status semantics stay in one file.
+ * `storedStatus` wins when present, but it must be a status a PERSON CHOSE.
+ * `CampaignLead.status` is non-nullable and defaults to REQUEST_PENDING, so
+ * the column is always populated and passing it unconditionally made the
+ * default outrank real message history — every campaign lead sat at
+ * "Connection request pending" no matter how much conversation had happened.
+ * `fetchCampaignLeadPage` therefore passes it only when
+ * `CampaignLead.statusSetAt` is set, which the PATCH route stamps. A default
+ * is not an assertion; only a person's edit is.
  *
  * NOT DONE, deliberately: the connections/ICP dashboards do NOT look up whether
  * a connection also appears in some campaign. A campaign is one user's outreach
