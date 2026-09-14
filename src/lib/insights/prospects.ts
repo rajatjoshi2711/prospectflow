@@ -162,6 +162,7 @@ export async function fetchProspectPage({
       status: deriveLeadStatus({ isConnected: true, signals, identityKey }),
       relationshipScore: strength?.score ?? null,
       relationshipFactors: strength?.factors,
+      relationshipBasis: strength?.basis ?? null,
     };
   });
 

@@ -23,6 +23,8 @@ export type CampaignLeadRow = {
   status: CampaignLeadStatus;
   relationshipScore: number | null;
   relationshipFactors?: string[];
+  /** `ai`, `heuristic`, or null when unscored. See `ProspectRow`. */
+  relationshipBasis?: "ai" | "heuristic" | null;
   /** True when this lead resolved to a Connection in the user's own network. */
   inNetwork: boolean;
   /** A line of context lifted from the original spreadsheet row. */
@@ -219,6 +221,7 @@ export async function fetchCampaignLeadPage({
       }),
       relationshipScore: strength?.score ?? null,
       relationshipFactors: strength?.factors,
+      relationshipBasis: strength?.basis ?? null,
       inNetwork: lead.connectionId !== null,
       context: summarizeRawRow(rawRow, linkedinColumn, {
         firstName: lead.firstName,

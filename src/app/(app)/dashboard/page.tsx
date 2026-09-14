@@ -5,6 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { CountryBarChart, type CountryCount } from "@/components/country-bar-chart";
 import { getLatestCompleteBatch } from "@/lib/insights/prospects";
 import { fetchTopMatchesByCompany, type CompanyGroup } from "@/lib/insights/matches";
+import { getRelationshipScoringState } from "@/lib/relationship/state";
+import { ScoringStatusCard } from "@/components/scoring-status";
+import { StatCard } from "@/components/stat-card";
 
 const REMINDER_AFTER_DAYS = 15;
 const JOB_CHANGE_PREVIEW_LIMIT = 8;
@@ -103,6 +106,13 @@ export default async function DashboardPage() {
       : Promise.resolve([]),
   ]);
 
+  // Phase 7: scoring happens in Inngest, out of band, so the dashboard says
+  // explicitly whether a run is in flight rather than leaving an unexplained
+  // empty score column behind.
+  const scoringState = await getRelationshipScoringState(session.userId, {
+    hasCompletedImport: batch !== null,
+  });
+
   const countries: CountryCount[] = countryGroups.flatMap((group) =>
     group.country ? [{ country: group.country, count: group._count.country }] : [],
   );
@@ -143,7 +153,7 @@ export default async function DashboardPage() {
       ) : null}
 
       <div className="mb-8 grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-        <StatCard label="Connections" value={connectionCount.toLocaleString()} />
+        <StatCard label="Connections" value={connectionCount.toLocaleString()} emphasis />
         <StatCard
           label="Last import"
           value={
@@ -154,6 +164,14 @@ export default async function DashboardPage() {
         />
         <StatCard label="Completed imports" value={importCount.toLocaleString()} />
         <StatCard label="Job changes detected" value={jobChangeTotal.toLocaleString()} />
+      </div>
+
+      <div className="mb-6">
+        <ScoringStatusCard
+          initialStatus={scoringState.status}
+          initialScoredCount={scoringState.scoredCount}
+          canRescoreOrg={session.role === "ADMIN"}
+        />
       </div>
 
       <div className="grid gap-6" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))" }}>
@@ -254,17 +272,6 @@ function daysSince(date: Date | null): number | null {
 function formatRole(title: string | null, company: string | null) {
   const parts = [title, company].filter(Boolean);
   return parts.length > 0 ? parts.join(" at ") : "Unknown role";
-}
-
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="ef-card">
-      <p className="ef-caption mb-1">{label}</p>
-      <p style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 28, lineHeight: 1.1 }}>
-        {value}
-      </p>
-    </div>
-  );
 }
 
 /**

@@ -211,6 +211,7 @@ export async function fetchMatchPage({
       status: deriveLeadStatus({ isConnected: true, signals, identityKey }),
       relationshipScore: strength?.score ?? null,
       relationshipFactors: strength?.factors,
+      relationshipBasis: strength?.basis ?? null,
       matchScore: match.score,
       rationale: match.rationale,
       definitionName: match.icp?.name ?? match.channelPartner?.name ?? "Unknown",

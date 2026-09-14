@@ -6,7 +6,32 @@
    Source of truth: emergeflow-design skill / assets/colors_and_type.css
    ========================================================================== */
 
+/* --------------------------------------------------------------------------
+   LIGHT ONLY — a decision, not an omission.
+
+   ProspectFlow ships one theme. The EmergeFlow Design System defines a single
+   light palette (cool neutrals, Neutral-900 standing in for black) and does not
+   specify dark equivalents for its semantic colors, the brand gradient, or the
+   soft badge tints. Inventing a dark set here would mean inventing brand
+   colors, which is exactly what the design system exists to prevent.
+
+   Half-implementing it is worse than not doing it: `prefers-color-scheme` would
+   darken chrome while every inline `background: #fff` and every `--*-soft`
+   badge stayed light, which is how you get white cards on a black page and
+   unreadable badges. So `color-scheme: light` is declared explicitly below —
+   form controls, scrollbars and the browser's default canvas all render light
+   regardless of the reader's OS setting, and the app looks the same for
+   everyone.
+
+   To add dark mode later: get dark tokens into the design system first, then
+   redefine the ROLE variables (`--text-*`, `--bg-*`, `--border*`, the `-soft`
+   tints) under a dark block, and replace the hard-coded `#fff` fills in the
+   components with `var(--bg-page)`. Doing it in that order is the whole job.
+   -------------------------------------------------------------------------- */
+
 :root {
+  color-scheme: light;
+
   /* --- Brand blue (primary, the workhorse) --- */
   --blue-50: #eaf2fb;
   --blue-100: #ccddf1;

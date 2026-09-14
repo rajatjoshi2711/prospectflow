@@ -86,9 +86,51 @@ function blankAggregate(): Aggregate {
   return { messages: [], hasInvitation: false, hasInvitationNote: false };
 }
 
+/**
+ * Public entry point. Runs the scoring pass, then stamps
+ * `User.relationshipScoreComputedAt` on EVERY exit path — including the
+ * no-import and no-signal ones, which are finished runs too, just with nothing
+ * to write.
+ *
+ * That stamp is what lets the dashboard say "scoring is running" honestly:
+ * paired with `relationshipScoreRequestedAt` it distinguishes "the job has not
+ * finished yet" from "the job finished and found no interaction data". Without
+ * it, an empty score table means both things at once and the UI has to guess.
+ *
+ * The stamp is written even when the run throws, so a permanently failing job
+ * cannot leave the UI spinning forever; the error is re-thrown afterwards so
+ * Inngest still sees the failure and retries.
+ */
 export async function computeRelationshipScoresForUser(
   userId: string,
 ): Promise<RelationshipRunSummary> {
+  try {
+    return await runScoring(userId);
+  } finally {
+    await markScoringComputed(userId);
+  }
+}
+
+/**
+ * Records that a scoring run finished for this user.
+ *
+ * Best-effort: the scores themselves are already committed by this point, and
+ * failing the whole run because a timestamp did not write would throw away real
+ * work. A missed stamp degrades to the UI's "taking longer than expected" state,
+ * which is a nudge, not a lie.
+ */
+async function markScoringComputed(userId: string): Promise<void> {
+  try {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { relationshipScoreComputedAt: new Date() },
+    });
+  } catch (error) {
+    console.error("Failed to stamp relationshipScoreComputedAt", { userId, error });
+  }
+}
+
+async function runScoring(userId: string): Promise<RelationshipRunSummary> {
   const base: RelationshipRunSummary = {
     userId,
     status: "no-import",

@@ -43,6 +43,17 @@ model User {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   lastImportAt   DateTime?
+  /// Phase 7. When relationship scoring was last ASKED for (import completed,
+  /// nightly sweep, or the user pressing "re-score now"). Paired with
+  /// `relationshipScoreComputedAt` this is the only honest way the UI can say
+  /// "scoring is running" — Inngest runs out of band, so without a requested/
+  /// computed pair the dashboard cannot tell "no scores yet because the job is
+  /// mid-flight" from "no scores because there is no interaction data".
+  relationshipScoreRequestedAt DateTime?
+  /// When the per-user scoring run last FINISHED, written by
+  /// `computeRelationshipScoresForUser` on every exit path (including the
+  /// no-import and no-signal ones, which are finished runs too).
+  relationshipScoreComputedAt  DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -501,6 +512,48 @@ model QuickSuggestion {
   @@index([organizationId, dismissed, createdAt])
   @@index([sourceUserId])
   @@index([targetConnectionId])
+}
+
+/// Phase 7. Fixed-window counter backing the AI rate limiter.
+///
+/// WHY POSTGRES AND NOT KV/REDIS
+/// -----------------------------
+/// Vercel runs this app on serverless instances that are created, frozen and
+/// discarded per request, so an in-memory counter is not a rate limit at all —
+/// it resets whenever a new instance is spun up and is per-instance even when
+/// it survives. That leaves a shared store. `@vercel/kv`/Upstash would be the
+/// textbook answer, but it is another service to provision, pay for, and keep
+/// alive; Postgres is ALREADY a hard dependency of every route this limiter
+/// protects (ProspectAsk cannot answer without it — it persists every turn to
+/// `ChatMessage`). A counter here therefore adds no new failure mode and no new
+/// infrastructure. The cost is one indexed upsert per AI request, which is
+/// negligible next to a multi-second Groq call.
+///
+/// SHAPE
+/// -----
+/// One row per (subject, bucket, window kind, window start). A window is a
+/// truncated clock hour or UTC day, so the row for the current window is found
+/// by a single unique-index lookup and incremented with
+/// `INSERT ... ON CONFLICT DO UPDATE`, which is atomic under concurrency.
+/// Expired rows are pruned opportunistically; they are pure cache and can be
+/// deleted at any time without affecting correctness (a deleted window simply
+/// restarts at zero, and only ever for a window that has already elapsed).
+model AiUsageCounter {
+  id          String   @id @default(cuid())
+  /// `user:<userId>` or `org:<organizationId>`.
+  subjectKey  String
+  /// Which limit this counts, e.g. `prospect-ask`, `recompute`, `org-total`.
+  bucket      String
+  /// `hour` or `day`. Named `windowKind` because `window` is a SQL keyword.
+  windowKind  String
+  /// Start of the window, truncated (UTC).
+  windowStart DateTime
+  count       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([subjectKey, bucket, windowKind, windowStart])
+  @@index([windowStart])
 }
 
 model ChatMessage {

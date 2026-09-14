@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth/guards";
+import { consumeAiQuota, rateLimitResponse } from "@/lib/ai/rate-limit";
 import { firstIssue } from "@/lib/matching/schemas";
 import { runChatTurn } from "@/lib/prospect-ask/agent";
 
@@ -16,6 +17,13 @@ import { runChatTurn } from "@/lib/prospect-ask/agent";
  *
  * A tool-calling turn can take a while (several model round trips), so this runs
  * on the Node runtime with a raised duration cap.
+ *
+ * COST (Phase 7): this is the most expensive route in the app — one request can
+ * cost up to 5 Groq calls. It is therefore rate limited per user and per org
+ * before anything is persisted or any provider is touched. The limit is checked
+ * AFTER the body is validated (so a malformed request does not burn quota) and
+ * BEFORE the turn runs (so a rejected request costs nothing but a counter
+ * increment).
  */
 
 export const runtime = "nodejs";
@@ -43,6 +51,13 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: firstIssue(parsed.error) }, { status: 400 });
   }
+
+  const quota = await consumeAiQuota({
+    userId: guard.session.userId,
+    organizationId: guard.session.organizationId,
+    action: "prospect-ask",
+  });
+  if (!quota.ok) return rateLimitResponse(quota);
 
   const conversationId = parsed.data.conversationId ?? crypto.randomUUID();
 

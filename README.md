@@ -4,14 +4,26 @@ An internal tool that turns every employee's LinkedIn network into a shared,
 queryable asset: ICP/channel-partner matching, job-change alerts, campaign
 tracking, and an AI chat assistant over the whole dataset.
 
-This repository currently implements **Phase 1 — Foundation** and
-**Phase 2 — Ingestion**: auth, org-by-email-domain bootstrap, the full
-database schema, the base app shell styled with the EmergeFlow Design
-System, admin user management, and the LinkedIn export ingestion pipeline
-(direct-to-blob zip upload, background CSV processing via Inngest, and an
-imports page with version history). Later phases (diffing-driven
-dashboards, ICP/channel-partner matching, campaigns, AI depth) build on top
-of this.
+All seven build phases are implemented:
+
+1. **Foundation** — email/password auth, org-by-email-domain bootstrap (first
+   signup from a domain becomes its admin), the full database schema, the app
+   shell styled with the EmergeFlow Design System, and admin user management.
+2. **Ingestion** — direct-to-blob zip upload, background CSV processing via
+   Inngest, and an imports page with version history. Every upload is a new
+   dated `ImportBatch`; nothing is ever overwritten.
+3. **Core dashboards** — the user dashboard (upload reminder, job-change
+   alerts, country analytics) and the all-connections dashboard, built on a
+   shared prospect table.
+4. **ICP / channel-partner matching** — admin-defined ICPs and channel
+   partners, Groq-backed scoring behind a deterministic pre-filter, and the
+   matched-prospect dashboards.
+5. **Campaigns** — personal lead lists from a spreadsheet, with LinkedIn URL
+   column auto-detection and editable outreach statuses.
+6. **AI depth** — hybrid relationship-strength scoring, org-wide quick
+   suggestions, the org dashboard, and the ProspectAsk chatbot.
+7. **Polish** — rate limiting and cost guardrails on AI routes, empty/loading/
+   error states, manual re-scoring, score provenance, and a responsive pass.
 
 ## Stack
 
@@ -50,6 +62,11 @@ cp .env.example .env
 | `GROQ_API_KEY` | Phase 4 — optional | Groq API key for GPT-OSS-120B (`https://api.groq.com/openai/v1`), used to score and explain ICP / channel-partner matches. Get one at [console.groq.com/keys](https://console.groq.com/keys). **Without it the app still works**: matching falls back to the deterministic keyword pre-filter and labels each rationale "(AI scoring unavailable)". Nothing is instantiated at module load, so a missing key never breaks an unrelated route. |
 | `LLM_PROVIDER` | No | Selects the provider implementation in `src/lib/ai/index.ts`. Defaults to `groq`; that is the only value today. |
 | `GROQ_MODEL` | No | Overrides the model slug. Defaults to `openai/gpt-oss-120b` (the `openai/` prefix is part of Groq's model id, not a vendor switch). |
+| `CRON_SECRET` | Phase 6 | Shared secret for the nightly AI sweep at `/api/cron/ai-sweep`. Without it the route refuses with 503 rather than running unauthenticated. |
+| `AI_CHAT_LIMIT_PER_HOUR` / `AI_CHAT_LIMIT_PER_DAY` | No | Per-user ProspectAsk limits. Default `20` / `100`. |
+| `AI_RECOMPUTE_LIMIT_PER_HOUR` / `AI_RECOMPUTE_LIMIT_PER_DAY` | No | Per-user "re-score now" limits. Default `3` / `10`. |
+| `AI_ORG_LIMIT_PER_DAY` | No | Org-wide daily ceiling across all AI-invoking requests. Default `600`. |
+| `AI_RATE_LIMIT_ENABLED` | No | Set to `false` to disable rate limiting (local development only). Anything else, including unset, leaves it on. |
 
 ### 3. Set up the database
 
@@ -302,6 +319,66 @@ belonging to the user. Re-running produces the same table, never duplicates.
 The Inngest function is limited to one concurrent run per organization so two
 runs cannot prune each other's writes.
 
+## AI cost guardrails
+
+Everything that can reach a model is bounded, in three independent places.
+
+**Per request.** One ProspectAsk question costs at most `MAX_MODEL_CALLS_PER_TURN`
+(5) model calls: four tool-calling rounds plus one final answer with tools
+withdrawn. That is enforced by both the loop bound and an explicit call counter
+in `src/lib/prospect-ask/agent.ts`, so restructuring the loop cannot silently
+raise the ceiling. Tool calls within a round are capped at 4, and a tool result
+larger than 12KB is truncated before it is sent back.
+
+**Per user and per org.** `src/lib/ai/rate-limit.ts` charges every AI-invoking
+route against fixed hourly and daily windows, plus an org-wide daily budget. A
+caller who runs out gets a 429 with a written explanation in the usual `error`
+field — the chat UI renders it as a sentence, not as a status code. Limits come
+from the env vars above.
+
+*Why Postgres and not Redis/KV.* In-memory counters are not a rate limit on
+Vercel: serverless instances are created and discarded per burst, so a module
+scoped `Map` resets constantly and is per-instance even when it survives.
+`@vercel/kv`/Upstash is the textbook answer and is better at high volume, but it
+is another service to provision, pay for, and keep alive. Postgres is already a
+hard dependency of every route being protected — ProspectAsk cannot answer
+without it, since it persists both sides of each turn to `ChatMessage` — so one
+indexed `INSERT ... ON CONFLICT DO UPDATE` per request adds no new
+infrastructure and no new failure mode, and is noise next to a multi-second Groq
+call. Windows are fixed rather than sliding, which can let through up to 2x the
+limit across a boundary; acceptable, since these limits exist to bound spend
+rather than to be exactly fair per request. The limiter fails **closed**. If it
+ever needs to move to Redis, `consumeAiQuota` is the only function callers
+touch.
+
+**Per batch job.** The background jobs were already capped and those caps are
+real:
+
+| Job | Cap | Worst case |
+| --- | --- | --- |
+| `compute-relationship-scores` | 400 people per user per run, 15 per model call; people with no message and no invitation note are never scored at all | 27 model calls per user per run, independent of network size |
+| `compute-quick-suggestions` | digest capped at 60 candidates, output at 8 | exactly 1 model call per org per run |
+| `compute-matches` | see `src/lib/matching/run.ts` | bounded by the keyword pre-filter, not by connection count |
+
+All three run at `concurrency: 1` per organization and `retries: 1`, and the
+Groq client itself uses `maxRetries: 1`, so the worst case for any single call
+is 4 attempts rather than the 9+ you get from stacking default retry policies.
+
+## Relationship scoring: running, ready, or nothing to score
+
+Scoring runs in Inngest, out of band from every page, so a page cannot tell from
+the score table alone whether a run is mid-flight. `User.relationshipScoreRequestedAt`
+and `relationshipScoreComputedAt` are stamped at every enqueue and every run
+completion; `src/lib/relationship/state.ts` turns that pair into a status the
+dashboard and connections page render, with a "Re-score now" control beside it
+(admins also get an org-wide variant). The control is rate limited like any other
+AI route.
+
+The distinction the status preserves: a finished run with zero scores means the
+export carried no messages or invitation notes, which is a gap in the data and
+not a weak network. That is stated in those words rather than left as a blank
+column.
+
 ## Project structure
 
 ```
@@ -365,6 +442,22 @@ Tokens live as CSS custom properties in `src/app/globals.css`, plus small
 utility classes (`ef-btn`, `ef-card`, `ef-badge`, `ef-input`, etc.) mirroring
 the design system's own reference CSS.
 
+**Light theme only, deliberately.** The EmergeFlow Design System defines one
+light palette and no dark equivalents for its semantic colors, brand gradient or
+soft badge tints. Inventing a dark set would mean inventing brand colors, and
+half-implementing it is worse than not doing it — `prefers-color-scheme` would
+darken the chrome while every hard-coded `#fff` card stayed light. `globals.css`
+therefore declares `color-scheme: light` explicitly and documents what adding
+dark mode would actually require.
+
+**Responsive.** The layout works down to phone width: the sidebar is off-canvas
+below 768px behind a header toggle, and is unchanged at `md` and above. Known
+limitation: the data tables (connections, matches, campaign leads) stay
+horizontally scrollable inside their own container at small widths rather than
+restacking as cards. They are comparison views with five or six columns, and a
+card stack loses the column alignment that makes them useful. Readable and
+usable on a phone, but the product is built for a desktop screen.
+
 ## Scripts
 
 | Script | What it does |
@@ -376,13 +469,17 @@ the design system's own reference CSS.
 | `npm run prisma:generate` | Regenerate the Prisma client |
 | `npm run prisma:migrate` | Run `prisma migrate dev` against `DATABASE_URL` |
 
-## What's not built yet
+## Known limitations
 
-Campaigns (Phase 5), and the relationship-strength AI pipeline, quick
-suggestions, org dashboard graph and ProspectAsk chatbot (Phase 6). Their
-routes exist as styled "Coming soon" placeholders so navigation and the route
-structure are already in place.
-
-Relationship strength shown on the dashboards is still the transparent
-heuristic from `src/lib/insights/relationship.ts`, not a stored
-`RelationshipStrengthScore`.
+- **Country analytics.** LinkedIn's `Connections.csv` has no country column, so
+  the dashboard's country chart stays empty until country data is enriched onto
+  connections from another source. The chart says so rather than showing zero.
+- **Data tables on phones** scroll horizontally rather than restacking (see
+  "Design system" above).
+- **Light theme only** (see above).
+- **Rate-limit windows are fixed**, not sliding, so a burst spanning a window
+  boundary can briefly exceed the nominal limit.
+- **Relationship scoring is capped at 400 people per user per run**, ranked by
+  evidence weight. In a very large network the thinnest-evidence relationships
+  fall outside the cap and render with the transparent heuristic instead, now
+  labelled "estimated" in the table so the difference is visible.

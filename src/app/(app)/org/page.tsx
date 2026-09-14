@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { fetchConnectionsOverTime, listOrgMembers } from "@/lib/insights/org";
 import { ConnectionsOverTimeChart } from "@/components/connections-over-time-chart";
+import { StatCard } from "@/components/stat-card";
 import {
   QuickSuggestionsPanel,
   type QuickSuggestionView,
@@ -95,8 +96,11 @@ export default async function OrgDashboardPage() {
         growing, and what the team should act on next.
       </p>
 
-      <div className="mb-8 flex flex-wrap gap-4">
-        <StatCard label="Members" value={members.length.toLocaleString()} />
+      <div
+        className="mb-8 grid gap-4"
+        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}
+      >
+        <StatCard label="Members" value={members.length.toLocaleString()} emphasis />
         <StatCard
           label="Connections in current snapshots"
           value={totalConnections.toLocaleString()}
@@ -200,17 +204,6 @@ export default async function OrgDashboardPage() {
           </div>
         )}
       </section>
-    </div>
-  );
-}
-
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="ef-card ef-card-stat" style={{ minWidth: 200, flex: "1 1 200px" }}>
-      <span className="ef-stat-number">{value}</span>
-      <span className="ef-caption" style={{ color: "var(--text-secondary)" }}>
-        {label}
-      </span>
     </div>
   );
 }

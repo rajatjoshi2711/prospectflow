@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { inngest } from "@/inngest/client";
+import { markScoringRequested } from "@/lib/relationship/state";
 
 /**
  * Nightly AI sweep, invoked by Vercel Cron (see `vercel.json`).
@@ -62,6 +63,15 @@ export async function GET(request: NextRequest) {
   if (organizations.length === 0) {
     return NextResponse.json({ ok: true, organizations: 0, events: 0 });
   }
+
+  // Mark every member as having a run pending before the fan-out, so the
+  // dashboards show "scoring is running" during the sweep instead of silently
+  // serving scores that are about to change.
+  await Promise.all(
+    organizations.map((organization) =>
+      markScoringRequested({ organizationId: organization.id }),
+    ),
+  );
 
   const events = organizations.flatMap((organization) => [
     {

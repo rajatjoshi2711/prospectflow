@@ -38,6 +38,14 @@ export type ProspectRow = {
   relationshipScore: number | null;
   /** Hover explanation for the score. */
   relationshipFactors?: string[];
+  /**
+   * How the number was derived: `ai` for a stored model-produced score,
+   * `heuristic` for the transparent rule-based fallback, `null` when there is
+   * no score at all. Surfaced in the table (Phase 7) because a 72 from a model
+   * and a 72 from an arithmetic rule are different claims, and the suggestions
+   * panel was previously the only place that said which.
+   */
+  relationshipBasis?: "ai" | "heuristic" | null;
   /** Rendered into the optional extra column. */
   extra?: ReactNode;
 };
@@ -259,7 +267,11 @@ export function ProspectTable({
                         )}
                       </td>
                       <td className="px-5 py-3" style={{ minWidth: 180 }}>
-                        <StrengthBar score={row.relationshipScore} factors={row.relationshipFactors} />
+                        <StrengthBar
+                          score={row.relationshipScore}
+                          factors={row.relationshipFactors}
+                          basis={row.relationshipBasis ?? null}
+                        />
                       </td>
                       {extraColumn ? <td className="ef-small px-5 py-3">{row.extra ?? "—"}</td> : null}
                     </tr>
@@ -329,11 +341,30 @@ function SortButton({
   );
 }
 
-/** Relationship strength out of 100, or an explicit "not yet scored" state. */
-function StrengthBar({ score, factors }: { score: number | null; factors?: string[] }) {
+/**
+ * Relationship strength out of 100, or an explicit "not yet scored" state.
+ *
+ * The provenance label under the bar is not decoration: `heuristic` means the
+ * number came from the deterministic rules in
+ * `src/lib/insights/relationship.ts` (message counts, recency, tenure) rather
+ * than from a model reading the interaction history. Someone deciding who to
+ * approach should know which they are looking at.
+ */
+function StrengthBar({
+  score,
+  factors,
+  basis,
+}: {
+  score: number | null;
+  factors?: string[];
+  basis: "ai" | "heuristic" | null;
+}) {
   if (score === null) {
     return (
-      <span className="ef-caption" title="Relationship scoring arrives with the AI pipeline.">
+      <span
+        className="ef-caption"
+        title="No messages or invitation note for this person in the import, so there is nothing to score a relationship from. Not the same as a weak relationship."
+      >
         Not yet scored
       </span>
     );
@@ -363,7 +394,21 @@ function StrengthBar({ score, factors }: { score: number | null; factors?: strin
           }}
         />
       </div>
-      <div className="ef-caption mt-1">{score} / 100</div>
+      <div className="ef-caption mt-1 flex flex-wrap items-center gap-1">
+        <span>{score} / 100</span>
+        {basis === "heuristic" ? (
+          <span
+            style={{ color: "var(--neutral-400)" }}
+            title="Calculated from message counts, recency and tenure — not an AI score. Either the AI pipeline has not reached this person yet, or no AI provider is configured."
+          >
+            · estimated
+          </span>
+        ) : basis === "ai" ? (
+          <span style={{ color: "var(--neutral-400)" }} title="Scored by the AI pipeline from this person's interaction history.">
+            · AI
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }

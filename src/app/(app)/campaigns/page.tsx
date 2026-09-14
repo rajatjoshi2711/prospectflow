@@ -41,7 +41,7 @@ export default async function CampaignsPage() {
 
   return (
     <div>
-      <p className="ef-eyebrow mb-2">Phase 5 — campaigns</p>
+      <p className="ef-eyebrow mb-2">Outreach</p>
       <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="ef-page mb-2">Campaigns</h1>

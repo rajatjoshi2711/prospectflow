@@ -14,6 +14,7 @@ import {
   normalizeDisplayName,
   normalizeNameParts,
 } from "@/lib/ingestion/identity-key";
+import { markScoringRequested } from "@/lib/relationship/state";
 
 const CHUNK_SIZE = 500;
 
@@ -480,6 +481,10 @@ export const processImport = inngest.createFunction(
         select: { organizationId: true },
       });
       if (!user) return { sent: false };
+      // Stamped before the send so the dashboard reads "scoring is running"
+      // from the moment the import lands, rather than showing a silent empty
+      // score column until the job happens to finish.
+      await markScoringRequested({ userId: batch.userId });
       await inngest.send([
         {
           name: "relationship/recompute.requested",

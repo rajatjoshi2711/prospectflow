@@ -33,9 +33,18 @@ import { TOOLS_BY_NAME, TOOL_DEFINITIONS, type ToolScope } from "@/lib/prospect-
  * At most `MAX_TOOL_ROUNDS` tool-calling rounds, then the model is asked for a
  * final answer with `toolChoice: "none"` so a loop cannot run away. Worst case
  * per question is MAX_TOOL_ROUNDS + 1 model calls.
+ *
+ * That ceiling is enforced TWICE on purpose (Phase 7): by the loop bound, and
+ * by `modelCalls` counted immediately before each `provider.complete()` call.
+ * The loop bound alone is correct today, but it is one `continue` away from not
+ * being — the counter is the invariant that survives edits, and it is the
+ * number the per-user rate limit's cost model is written against. One request
+ * to this module can never cost more than MAX_MODEL_CALLS_PER_TURN model calls.
  */
 
 const MAX_TOOL_ROUNDS = 4;
+/** Absolute ceiling on `provider.complete()` calls for a single question. */
+export const MAX_MODEL_CALLS_PER_TURN = MAX_TOOL_ROUNDS + 1;
 /** Tool calls executed in a single round. Guards against a fan-out burst. */
 const MAX_CALLS_PER_ROUND = 4;
 const MAX_ANSWER_TOKENS = 1_400;
@@ -74,6 +83,12 @@ export type ChatTurnResult = {
   toolCalls: { name: string; arguments: unknown; ok: boolean; error?: string }[];
   /** True when the answer came from the honest "AI not configured" path. */
   degraded: boolean;
+  /**
+   * Model calls actually spent this turn, 0 when degraded. Never exceeds
+   * `MAX_MODEL_CALLS_PER_TURN`; returned so cost is observable rather than
+   * inferred.
+   */
+  modelCalls: number;
 };
 
 /**
@@ -113,6 +128,7 @@ export async function runChatTurn({
       answer: AI_UNAVAILABLE_MESSAGE,
       toolCalls: [],
       degraded: true,
+      modelCalls: 0,
     };
   }
 
@@ -125,10 +141,15 @@ export async function runChatTurn({
 
   const audit: ChatTurnResult["toolCalls"] = [];
   let answer = "";
+  let modelCalls = 0;
 
   try {
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
+      // The hard budget. Unreachable given the loop bound, and that is the
+      // point: it holds even if the loop is later restructured.
+      if (modelCalls >= MAX_MODEL_CALLS_PER_TURN) break;
       const lastRound = round === MAX_TOOL_ROUNDS;
+      modelCalls += 1;
       const completion = await provider.complete({
         messages,
         // On the final round tools are withdrawn, which forces prose. Without
@@ -200,7 +221,7 @@ export async function runChatTurn({
     },
   });
 
-  return { conversationId, answer, toolCalls: audit, degraded: false };
+  return { conversationId, answer, toolCalls: audit, degraded: false, modelCalls };
 }
 
 /**

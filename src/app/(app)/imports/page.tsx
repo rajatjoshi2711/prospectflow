@@ -26,7 +26,7 @@ export default async function ImportsPage() {
 
   return (
     <div>
-      <p className="ef-eyebrow mb-2">Phase 2 — ingestion</p>
+      <p className="ef-eyebrow mb-2">Your data</p>
       <h1 className="ef-page mb-2">Imports</h1>
       <p className="ef-lead mb-8" style={{ maxWidth: 640 }}>
         Upload your LinkedIn data export (the .zip you get from LinkedIn&apos;s

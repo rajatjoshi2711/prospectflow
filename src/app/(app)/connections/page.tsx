@@ -8,6 +8,8 @@ import {
   getLatestCompleteBatch,
   parseProspectSearchParams,
 } from "@/lib/insights/prospects";
+import { getRelationshipScoringState } from "@/lib/relationship/state";
+import { ScoringStatusCard } from "@/components/scoring-status";
 
 export default async function ConnectionsDashboardPage({
   searchParams,
@@ -24,7 +26,7 @@ export default async function ConnectionsDashboardPage({
 
   const header = (
     <>
-      <p className="ef-eyebrow mb-2">Phase 3 — core dashboards</p>
+      <p className="ef-eyebrow mb-2">Network</p>
       <h1 className="ef-page mb-2">All connections</h1>
       <p className="ef-lead mb-8" style={{ maxWidth: 680 }}>
         Every connection from your most recent completed import, with outreach
@@ -42,6 +44,13 @@ export default async function ConnectionsDashboardPage({
     );
   }
 
+  // The relationship-strength column is the reason this card is here: without
+  // it, an in-flight scoring run and an export with no message history look
+  // identical (every row reads "Not yet scored").
+  const scoringState = await getRelationshipScoringState(session.userId, {
+    hasCompletedImport: true,
+  });
+
   const { rows, total, page } = await fetchProspectPage({
     userId: session.userId,
     importBatchId: batch.id,
@@ -58,6 +67,13 @@ export default async function ConnectionsDashboardPage({
         Snapshot from your import on{" "}
         {(batch.completedAt ?? batch.createdAt).toLocaleDateString()}.
       </p>
+      <div className="mb-6">
+        <ScoringStatusCard
+          initialStatus={scoringState.status}
+          initialScoredCount={scoringState.scoredCount}
+          canRescoreOrg={session.role === "ADMIN"}
+        />
+      </div>
       <ProspectTable
         rows={rows}
         total={total}

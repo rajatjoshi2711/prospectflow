@@ -76,6 +76,7 @@ export function CampaignLeadTable({
     status: overrides[row.id] ?? row.status,
     relationshipScore: row.relationshipScore,
     relationshipFactors: row.relationshipFactors,
+    relationshipBasis: row.relationshipBasis ?? null,
     extra: (
       <div>
         <div>{row.context ?? "—"}</div>
