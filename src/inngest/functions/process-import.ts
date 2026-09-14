@@ -68,15 +68,40 @@ const PREAMBLE_SCAN_LIMIT = 64 * 1024;
  * every column lookup returns null. That is exactly how a fully-populated
  * export produced a table of "Unnamed connection" rows.
  *
- * Returns the offset the header starts at, or `null` when the buffer does not
- * yet hold enough complete lines to decide.
+ * Detection strategy, in order:
  *
- * Deliberately conservative: a file that does not open with a `Notes:`
- * preamble is passed through from its first byte (minus a BOM), so this can
- * only ever remove a preamble it has positively identified.
+ *  1. When the caller knows a column the header must contain (`expected`),
+ *     the header is the first line containing one. This is the reliable
+ *     signal and is used for every file we map to a table.
+ *  2. Otherwise (the generic `RawCsvRow` path, where columns are unknown by
+ *     definition) fall back to the shape of the preamble itself: a leading
+ *     `Notes:` line, then the note, then a blank line, then the header.
+ *
+ * An earlier version of this used rule 2 alone. That was a mistake: it
+ * assumes a blank line separates the note from the header, and an export
+ * without one would scan to the limit, find nothing, and pass the file
+ * through with `Notes:` still standing in as the header — silently producing
+ * the very bug it was written to fix. Rule 1 does not care about the
+ * preamble's shape at all.
+ *
+ * Returns the offset the header starts at, or `null` when the buffer does not
+ * yet hold enough complete lines to decide (the caller keeps feeding it, and
+ * passes the stream through untouched if the limit is reached).
  */
-function findHeaderOffset(text: string): number | null {
+function findHeaderOffset(text: string, expected: string[]): number | null {
   const start = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+
+  if (expected.length > 0) {
+    const needles = expected.map((value) => value.toLowerCase());
+    let cursor = start;
+    for (;;) {
+      const newline = text.indexOf("\n", cursor);
+      if (newline === -1) return null;
+      const line = text.slice(cursor, newline).replace(/\r$/, "").toLowerCase();
+      if (needles.some((needle) => line.includes(needle))) return cursor;
+      cursor = newline + 1;
+    }
+  }
 
   let index = start;
   let firstLine: string | null = null;
@@ -119,7 +144,7 @@ function findHeaderOffset(text: string): number | null {
  * memory. If no header can be identified within `PREAMBLE_SCAN_LIMIT`, the
  * original bytes are emitted unchanged rather than risking data loss.
  */
-function stripPreamble(source: Readable): Readable {
+function stripPreamble(source: Readable, expected: string[]): Readable {
   const out = new PassThrough();
   const decoder = new StringDecoder("utf8");
 
@@ -137,7 +162,7 @@ function stripPreamble(source: Readable): Readable {
           continue;
         }
         head += decoder.write(chunk as Buffer);
-        const offset = findHeaderOffset(head);
+        const offset = findHeaderOffset(head, expected);
         if (offset === null) {
           if (head.length <= PREAMBLE_SCAN_LIMIT) continue;
           resolved = true;
@@ -152,7 +177,7 @@ function stripPreamble(source: Readable): Readable {
 
       head += decoder.end();
       if (!resolved) {
-        const offset = findHeaderOffset(head);
+        const offset = findHeaderOffset(head, expected);
         await write(offset === null ? head : head.slice(offset));
       } else {
         await write(head);
@@ -167,9 +192,14 @@ function stripPreamble(source: Readable): Readable {
 }
 
 /** Parses a readable CSV stream and hands each row to `onRow`. */
-function parseCsvStream(stream: Readable, onRow: (row: ParsedRow) => void): Promise<void> {
+function parseCsvStream(
+  stream: Readable,
+  onRow: (row: ParsedRow) => void,
+  /** A column the real header must contain. See `findHeaderOffset`. */
+  expected: string[] = [],
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    Papa.parse<ParsedRow>(stripPreamble(stream), {
+    Papa.parse<ParsedRow>(stripPreamble(stream, expected), {
       header: true,
       skipEmptyLines: true,
       step: (result) => {
@@ -248,7 +278,7 @@ async function processEntry(
         position: getField(row, ["Position", "Title"]),
         connectedOn: toDate(getField(row, ["Connected On"])),
       });
-    });
+    }, ["First Name", "Connected On"]);
     await flush(rows, (chunk) => prisma.connection.createMany({ data: chunk }));
     return;
   }
@@ -272,7 +302,7 @@ async function processEntry(
         startedOn: toDate(getField(row, ["Started On"])),
         finishedOn: toDate(getField(row, ["Finished On"])),
       });
-    });
+    }, ["Company Name", "Title"]);
     await flush(rows, (chunk) => prisma.position.createMany({ data: chunk }));
     return;
   }
@@ -314,7 +344,7 @@ async function processEntry(
         sentAt: toDate(getField(row, ["Sent At", "Sent At (Optional)"])),
         message: getField(row, ["Message"]),
       });
-    });
+    }, ["Sent At", "Direction"]);
     await flush(rows, (chunk) => prisma.invitation.createMany({ data: chunk }));
     return;
   }
@@ -352,7 +382,7 @@ async function processEntry(
         sentAt: toDate(getField(row, ["Date", "Sent At"])),
         content: getField(row, ["Content", "Message"]),
       });
-    });
+    }, ["CONVERSATION ID", "CONVERSATION TITLE"]);
     await flush(rows, (chunk) => prisma.messageRecord.createMany({ data: chunk }));
     return;
   }
@@ -473,7 +503,7 @@ function findAccountOwnerName(buffer: Buffer): Promise<string | null> {
             // Keep the export's original casing for display; matching is done
             // on the normalized form.
             if (normalizeNameParts(parts, null)) found = parts;
-          })
+          }, ["First Name", "Headline"])
             .then(() => zipfile.readEntry())
             .catch(() => zipfile.readEntry());
         });
