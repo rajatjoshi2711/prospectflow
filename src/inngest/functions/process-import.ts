@@ -17,6 +17,7 @@ import {
   normalizeNameParts,
 } from "@/lib/ingestion/identity-key";
 import { markScoringRequested } from "@/lib/relationship/state";
+import { relinkUserCampaignLeads } from "@/lib/campaigns/link";
 
 const CHUNK_SIZE = 500;
 
@@ -597,6 +598,15 @@ export const processImport = inngest.createFunction(
 
     await step.run("diff-job-changes", async () => {
       await diffJobChanges(batch.userId, importBatchId);
+    });
+
+    // Campaign leads cache which person in the network they refer to, and that
+    // cache is scoped to whichever import was current when the campaign was
+    // built. This import just replaced that snapshot, so re-point them: a lead
+    // who was a stranger before may be a connection now, and their status and
+    // relationship bar should say so without the user re-uploading the sheet.
+    await step.run("relink-campaign-leads", async () => {
+      await relinkUserCampaignLeads(batch.userId);
     });
 
     // Phase 4: re-score this user's fresh snapshot against the org's ICPs and

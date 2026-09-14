@@ -14,6 +14,7 @@ import {
 } from "@/lib/campaigns/parse-spreadsheet";
 import { detectLinkedinColumn } from "@/lib/campaigns/detect-column";
 import { extractLeadFields } from "@/lib/campaigns/fields";
+import { buildConnectionIndex, resolveConnectionId } from "@/lib/campaigns/link";
 import {
   computeIdentityKey,
   computeNameKeyFromParts,
@@ -105,56 +106,6 @@ export async function detectCampaignColumns(campaignId: string) {
 }
 
 /**
- * Links leads to the user's own network.
- *
- * Loads every `Connection` from the user's most recent COMPLETE import (the
- * same "current snapshot" definition the dashboards use) and indexes it by the
- * two keys ingestion writes:
- *
- *   `identityKey` — `url:<normalized profile url>`. EXACT. Connections.csv
- *                   carries a profile URL for essentially every row, and a
- *                   campaign lead only reaches here when the confirmed column
- *                   held one too, so where the person really is in the user's
- *                   network this matches — expect the large majority of hits.
- *   `nameKey`     — `name:<normalized display name>`. Weak, and only consulted
- *                   when the URL key missed. Two different people with the same
- *                   display name share a nameKey (see identity-key.ts), so this
- *                   can mis-attribute. It only ever adds a relationship-strength
- *                   read and a "in your network" note — never an irreversible
- *                   action — which is why the fallback is worth keeping.
- *
- * A lead that matches nothing keeps `connectionId = null`, and the UI shows it
- * as not in the network / not yet scored rather than inventing a score.
- */
-async function buildConnectionIndex(userId: string) {
-  const batch = await prisma.importBatch.findFirst({
-    where: { userId, status: "COMPLETE" },
-    orderBy: { completedAt: "desc" },
-    select: { id: true },
-  });
-  if (!batch) return { byIdentity: new Map<string, string>(), byName: new Map<string, string>() };
-
-  const connections = await prisma.connection.findMany({
-    where: { importBatchId: batch.id },
-    select: { id: true, identityKey: true, nameKey: true, firstName: true, lastName: true },
-  });
-
-  const byIdentity = new Map<string, string>();
-  const byName = new Map<string, string>();
-  for (const connection of connections) {
-    // First writer wins on both maps, so a duplicated export row cannot flip
-    // which connection a lead resolves to between runs.
-    if (!byIdentity.has(connection.identityKey)) {
-      byIdentity.set(connection.identityKey, connection.id);
-    }
-    const nameKey =
-      connection.nameKey ?? computeNameKeyFromParts(connection.firstName, connection.lastName);
-    if (nameKey && !byName.has(nameKey)) byName.set(nameKey, connection.id);
-  }
-  return { byIdentity, byName };
-}
-
-/**
  * STEP 2 — the user confirmed a column; create the leads and link them.
  *
  * Idempotent by construction: it deletes any leads already attached to the
@@ -213,8 +164,7 @@ export async function buildCampaignLeads(campaignId: string) {
       });
       const nameKey = computeNameKeyFromParts(fields.firstName, fields.lastName);
 
-      const connectionId =
-        byIdentity.get(identityKey) ?? (nameKey ? (byName.get(nameKey) ?? null) : null) ?? null;
+      const connectionId = resolveConnectionId({ byIdentity, byName }, identityKey, nameKey);
       if (connectionId) matched += 1;
 
       leads.push({
