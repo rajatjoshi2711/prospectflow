@@ -39,7 +39,8 @@ export function ImportsManager({ initialBatches }: { initialBatches: ImportBatch
       const data = (await res.json()) as { batches: ImportBatchRow[] };
       setBatches(data.batches);
     } catch {
-      // Silent — the manual "Refresh" button and next poll tick will retry.
+      // Silent — the next poll tick retries. A blip mid-import is not worth
+      // an error banner when the following tick is 4s away.
     }
   }, []);
 
@@ -119,13 +120,6 @@ export function ImportsManager({ initialBatches }: { initialBatches: ImportBatch
               }}
             />
           </label>
-          <button
-            type="button"
-            className="ef-btn ef-btn-secondary"
-            onClick={() => void refresh()}
-          >
-            Refresh
-          </button>
         </div>
         {error ? (
           <div
