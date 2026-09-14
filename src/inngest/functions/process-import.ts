@@ -1,4 +1,6 @@
-import { Readable } from "node:stream";
+import { once } from "node:events";
+import { PassThrough, Readable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import Papa from "papaparse";
 import yauzl from "yauzl";
 import { NonRetriableError } from "inngest";
@@ -46,10 +48,128 @@ async function flush<T>(rows: T[], insert: (chunk: T[]) => Promise<unknown>) {
   rows.length = 0;
 }
 
+/** How far into a file we look for the real header before giving up. */
+const PREAMBLE_SCAN_LIMIT = 64 * 1024;
+
+/**
+ * Locates the real header row in a LinkedIn CSV export.
+ *
+ * Several files in the export (Connections.csv most importantly) open with a
+ * human-readable preamble rather than the header:
+ *
+ *     Notes:
+ *     "When exporting your connection data, you may notice that some of the
+ *      email addresses are missing..."
+ *     <blank line>
+ *     First Name,Last Name,URL,Email Address,Company,Position,Connected On
+ *
+ * Parsed with `header: true` and no preamble handling, papaparse takes
+ * `Notes:` as the header row, so every row becomes `{ "Notes:": ... }` and
+ * every column lookup returns null. That is exactly how a fully-populated
+ * export produced a table of "Unnamed connection" rows.
+ *
+ * Returns the offset the header starts at, or `null` when the buffer does not
+ * yet hold enough complete lines to decide.
+ *
+ * Deliberately conservative: a file that does not open with a `Notes:`
+ * preamble is passed through from its first byte (minus a BOM), so this can
+ * only ever remove a preamble it has positively identified.
+ */
+function findHeaderOffset(text: string): number | null {
+  const start = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+
+  let index = start;
+  let firstLine: string | null = null;
+  while (firstLine === null) {
+    const newline = text.indexOf("\n", index);
+    if (newline === -1) return null;
+    const line = text.slice(index, newline).replace(/\r$/, "");
+    if (line.trim() === "") {
+      index = newline + 1;
+      continue;
+    }
+    firstLine = line;
+  }
+
+  if (!/^"?notes:/i.test(firstLine.trim())) return start;
+
+  // Inside the preamble: the header is the first non-empty line after the
+  // blank line that terminates the note.
+  let cursor = text.indexOf("\n", index) + 1;
+  let sawBlankLine = false;
+  for (;;) {
+    const newline = text.indexOf("\n", cursor);
+    if (newline === -1) return null;
+    const line = text.slice(cursor, newline).replace(/\r$/, "");
+    if (line.trim() === "") {
+      sawBlankLine = true;
+      cursor = newline + 1;
+      continue;
+    }
+    if (sawBlankLine) return cursor;
+    cursor = newline + 1;
+  }
+}
+
+/**
+ * Wraps a CSV stream so the parser's first line is the real header.
+ *
+ * Buffers only far enough to locate the header, then streams the remainder
+ * through untouched — the export's message files are far too large to hold in
+ * memory. If no header can be identified within `PREAMBLE_SCAN_LIMIT`, the
+ * original bytes are emitted unchanged rather than risking data loss.
+ */
+function stripPreamble(source: Readable): Readable {
+  const out = new PassThrough();
+  const decoder = new StringDecoder("utf8");
+
+  const write = async (data: string) => {
+    if (data.length > 0 && !out.write(data)) await once(out, "drain");
+  };
+
+  void (async () => {
+    let head = "";
+    let resolved = false;
+    try {
+      for await (const chunk of source) {
+        if (resolved) {
+          await write(decoder.write(chunk as Buffer));
+          continue;
+        }
+        head += decoder.write(chunk as Buffer);
+        const offset = findHeaderOffset(head);
+        if (offset === null) {
+          if (head.length <= PREAMBLE_SCAN_LIMIT) continue;
+          resolved = true;
+          await write(head);
+          head = "";
+          continue;
+        }
+        resolved = true;
+        await write(head.slice(offset));
+        head = "";
+      }
+
+      head += decoder.end();
+      if (!resolved) {
+        const offset = findHeaderOffset(head);
+        await write(offset === null ? head : head.slice(offset));
+      } else {
+        await write(head);
+      }
+      out.end();
+    } catch (error) {
+      out.destroy(error instanceof Error ? error : new Error(String(error)));
+    }
+  })();
+
+  return out;
+}
+
 /** Parses a readable CSV stream and hands each row to `onRow`. */
 function parseCsvStream(stream: Readable, onRow: (row: ParsedRow) => void): Promise<void> {
   return new Promise((resolve, reject) => {
-    Papa.parse<ParsedRow>(stream, {
+    Papa.parse<ParsedRow>(stripPreamble(stream), {
       header: true,
       skipEmptyLines: true,
       step: (result) => {
