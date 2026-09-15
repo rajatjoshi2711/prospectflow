@@ -1,4 +1,8 @@
+import type { CampaignLeadStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { loadInteractionSignals } from "@/lib/insights/load-signals";
+import { toPersonRef } from "@/lib/insights/signals";
+import { deriveLeadStatus } from "@/lib/insights/status";
 
 /**
  * Links campaign leads to the user's own network.
@@ -29,7 +33,12 @@ export async function buildConnectionIndex(userId: string) {
     select: { id: true },
   });
   if (!batch) {
-    return { byIdentity: new Map<string, string>(), byName: new Map<string, string>() };
+    return {
+      batchId: null as string | null,
+      byIdentity: new Map<string, string>(),
+      byName: new Map<string, string>(),
+      byConnectionId: new Map<string, { identityKey: string; nameKey: string | null }>(),
+    };
   }
 
   const connections = await prisma.connection.findMany({
@@ -39,6 +48,7 @@ export async function buildConnectionIndex(userId: string) {
 
   const byIdentity = new Map<string, string>();
   const byName = new Map<string, string>();
+  const byConnectionId = new Map<string, { identityKey: string; nameKey: string | null }>();
   for (const connection of connections) {
     // First writer wins on both maps, so a duplicated export row cannot flip
     // which connection a lead resolves to between runs.
@@ -48,8 +58,12 @@ export async function buildConnectionIndex(userId: string) {
     if (connection.nameKey && !byName.has(connection.nameKey)) {
       byName.set(connection.nameKey, connection.id);
     }
+    byConnectionId.set(connection.id, {
+      identityKey: connection.identityKey,
+      nameKey: connection.nameKey,
+    });
   }
-  return { byIdentity, byName };
+  return { batchId: batch.id, byIdentity, byName, byConnectionId };
 }
 
 /** Resolves one lead's keys against the index. */
@@ -80,35 +94,81 @@ export function resolveConnectionId(
  * lead data, and a re-link against a correctly-parsed import fixes them
  * without the user re-uploading the spreadsheet.
  *
- * Only `connectionId` is touched. A manually-set `CampaignLead.status` is the
- * user's own record of their outreach and is never overwritten here.
+ * It also refreshes `status` for leads the user has never set by hand.
+ *
+ * WHY STATUS IS STORED RATHER THAN DERIVED AT RENDER TIME
+ * ------------------------------------------------------
+ * Status used to be computed per rendered row. That cannot work, because the
+ * status filter chips count with a SQL `groupBy` and the filter itself is a
+ * `WHERE` clause — both read the column. A derived value the column does not
+ * know about means the chips say "Connection request pending 100" while the
+ * rows on screen say otherwise, and filtering to "Connection accepted" returns
+ * nothing. Materializing it here keeps counting, filtering and sorting honest,
+ * because they all read the same column the user sees.
+ *
+ * A hand-set status (`statusSetAt` non-null) is the user's own record of their
+ * outreach and is never overwritten.
  */
 export async function relinkUserCampaignLeads(userId: string): Promise<{
   examined: number;
-  changed: number;
+  relinked: number;
+  restatused: number;
 }> {
   const leads = await prisma.campaignLead.findMany({
     where: { campaign: { userId } },
-    select: { id: true, identityKey: true, nameKey: true, connectionId: true },
+    select: {
+      id: true,
+      identityKey: true,
+      nameKey: true,
+      connectionId: true,
+      status: true,
+      statusSetAt: true,
+    },
   });
-  if (leads.length === 0) return { examined: 0, changed: 0 };
+  if (leads.length === 0) return { examined: 0, relinked: 0, restatused: 0 };
 
   const index = await buildConnectionIndex(userId);
   // No current snapshot means no basis to re-link against. Leave the existing
   // links alone rather than clearing them on the strength of no evidence.
-  if (index.byIdentity.size === 0 && index.byName.size === 0) {
-    return { examined: leads.length, changed: 0 };
+  if (!index.batchId) return { examined: leads.length, relinked: 0, restatused: 0 };
+
+  const resolvedFor = new Map<string, string | null>();
+  for (const lead of leads) {
+    resolvedFor.set(lead.id, resolveConnectionId(index, lead.identityKey, lead.nameKey));
   }
 
-  let changed = 0;
+  // Signals are per batch and keyed by the connection's identity, so load them
+  // once for every connection any lead resolved to.
+  const people = [...new Set([...resolvedFor.values()].filter((id): id is string => id !== null))]
+    .map((id) => index.byConnectionId.get(id))
+    .filter((ref): ref is { identityKey: string; nameKey: string | null } => Boolean(ref))
+    .map((ref) => toPersonRef(ref));
+  const signals = await loadInteractionSignals(index.batchId, people);
+
+  let relinked = 0;
+  let restatused = 0;
   for (const lead of leads) {
-    const resolved = resolveConnectionId(index, lead.identityKey, lead.nameKey);
-    if (resolved === lead.connectionId) continue;
-    await prisma.campaignLead.update({
-      where: { id: lead.id },
-      data: { connectionId: resolved },
-    });
-    changed += 1;
+    const connectionId = resolvedFor.get(lead.id) ?? null;
+    const identityKey = connectionId
+      ? (index.byConnectionId.get(connectionId)?.identityKey ?? "")
+      : "";
+
+    const data: { connectionId?: string | null; status?: CampaignLeadStatus } = {};
+    if (connectionId !== lead.connectionId) data.connectionId = connectionId;
+
+    if (!lead.statusSetAt) {
+      const derived = deriveLeadStatus({
+        isConnected: connectionId !== null,
+        signals,
+        identityKey,
+      });
+      if (derived !== lead.status) data.status = derived;
+    }
+
+    if (Object.keys(data).length === 0) continue;
+    await prisma.campaignLead.update({ where: { id: lead.id }, data });
+    if (data.connectionId !== undefined) relinked += 1;
+    if (data.status !== undefined) restatused += 1;
   }
-  return { examined: leads.length, changed };
+  return { examined: leads.length, relinked, restatused };
 }

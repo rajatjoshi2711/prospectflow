@@ -14,7 +14,11 @@ import {
 } from "@/lib/campaigns/parse-spreadsheet";
 import { detectLinkedinColumn } from "@/lib/campaigns/detect-column";
 import { extractLeadFields } from "@/lib/campaigns/fields";
-import { buildConnectionIndex, resolveConnectionId } from "@/lib/campaigns/link";
+import {
+  buildConnectionIndex,
+  relinkUserCampaignLeads,
+  resolveConnectionId,
+} from "@/lib/campaigns/link";
 import {
   computeIdentityKey,
   computeNameKeyFromParts,
@@ -200,6 +204,11 @@ export async function buildCampaignLeads(campaignId: string) {
           : null,
       },
     });
+
+    // Leads are inserted with `status` at its column default. Materialize the
+    // real status now, so a brand-new campaign is correct immediately instead
+    // of waiting for the next import to run the same pass.
+    await relinkUserCampaignLeads(campaign.userId);
 
     return { campaignId, skipped: false as const, leadCount: leads.length, matched };
   } catch (error) {

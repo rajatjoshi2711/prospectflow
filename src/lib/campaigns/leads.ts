@@ -6,7 +6,6 @@ import { deriveRelationshipStrength } from "@/lib/insights/relationship";
 import { loadInteractionSignals } from "@/lib/insights/load-signals";
 import { loadStoredRelationshipScores } from "@/lib/insights/load-stored-scores";
 import { toPersonRef } from "@/lib/insights/signals";
-import { deriveLeadStatus } from "@/lib/insights/status";
 import { summarizeRawRow } from "@/lib/campaigns/fields";
 import type { SpreadsheetRow } from "@/lib/campaigns/parse-spreadsheet";
 import type { ProspectSortKey } from "@/components/prospect-table";
@@ -143,7 +142,6 @@ export async function fetchCampaignLeadPage({
       position: true,
       linkedinUrl: true,
       status: true,
-      statusSetAt: true,
       rawRow: true,
       connectionId: true,
       connection: {
@@ -211,16 +209,11 @@ export async function fetchCampaignLeadPage({
       company: lead.company,
       position: lead.position,
       linkedinUrl: lead.linkedinUrl,
-      // Only a HAND-SET status counts as stored. `status` is non-nullable and
-      // defaults to REQUEST_PENDING, so passing it unconditionally would make
-      // the default outrank the real message history behind it and freeze
-      // every untouched lead at "Connection request pending".
-      status: deriveLeadStatus({
-        isConnected: connection !== null,
-        signals: signals ?? { byKey: new Map(), hasAnyInteractionData: false },
-        identityKey: connection?.identityKey ?? "",
-        storedStatus: lead.statusSetAt ? lead.status : null,
-      }),
+      // The column is authoritative: `relinkUserCampaignLeads` materializes the
+      // derived status into it after every import, and a hand-set status wins
+      // there. Deriving again here would let the rows disagree with the status
+      // chips and the status filter, which necessarily read the column.
+      status: lead.status,
       relationshipScore: strength?.score ?? null,
       relationshipFactors: strength?.factors,
       relationshipBasis: strength?.basis ?? null,
