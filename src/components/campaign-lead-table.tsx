@@ -63,6 +63,37 @@ export function CampaignLeadTable({
   const [overrides, setOverrides] = useState<Record<string, CampaignLeadStatus>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
+  const [relinking, setRelinking] = useState(false);
+  const [relinkNote, setRelinkNote] = useState<string | null>(null);
+
+  /**
+   * Re-runs linking + status materialization against the current import.
+   *
+   * Clears local overrides afterwards: they exist to make a just-changed
+   * dropdown feel instant, and once the server has recomputed, a stale
+   * override would mask the fresh value.
+   */
+  async function refreshFromNetwork() {
+    setRelinking(true);
+    setError(null);
+    setRelinkNote(null);
+    try {
+      const res = await fetch("/api/campaigns/relink", { method: "POST" });
+      const data = (await res.json().catch(() => null)) as
+        | { relinked?: number; restatused?: number; error?: string }
+        | null;
+      if (!res.ok) throw new Error(data?.error ?? "Could not refresh from your network.");
+      setOverrides({});
+      setRelinkNote(
+        `Re-checked your leads — ${data?.relinked ?? 0} re-linked, ${data?.restatused ?? 0} status updates.`,
+      );
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not refresh from your network.");
+    } finally {
+      setRelinking(false);
+    }
+  }
 
   const byId = new Map(rows.map((row) => [row.id, row]));
 
@@ -151,7 +182,22 @@ export function CampaignLeadTable({
             onClick={() => setStatusFilter(status)}
           />
         ))}
+        <button
+          type="button"
+          className="ef-btn ef-btn-secondary"
+          style={{ marginLeft: "auto", padding: "4px 12px", fontSize: "var(--fs-small)" }}
+          disabled={relinking}
+          onClick={() => void refreshFromNetwork()}
+          title="Re-check which leads are in your network and update their status from your latest import"
+        >
+          {relinking ? "Refreshing…" : "Refresh from my network"}
+        </button>
       </div>
+      {relinkNote ? (
+        <p className="ef-caption" style={{ color: "var(--text-secondary)" }}>
+          {relinkNote}
+        </p>
+      ) : null}
       {error ? (
         <div
           className="ef-small rounded-[10px] px-4 py-3"
