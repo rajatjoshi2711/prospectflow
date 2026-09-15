@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type { CampaignStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
+import { CampaignDeleteButton } from "@/components/campaign-delete-button";
 
 /**
  * The user's own campaigns. Campaigns are PERSONAL — unlike ICPs and channel
@@ -79,6 +80,7 @@ export default async function CampaignsPage() {
                 <th className="ef-small px-5 py-3" style={{ fontWeight: 700 }}>In your network</th>
                 <th className="ef-small px-5 py-3" style={{ fontWeight: 700 }}>Status</th>
                 <th className="ef-small px-5 py-3" style={{ fontWeight: 700 }}>Created</th>
+                <th className="ef-small px-5 py-3"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -118,6 +120,13 @@ export default async function CampaignsPage() {
                     </td>
                     <td className="ef-small px-5 py-3">
                       {campaign.createdAt.toLocaleDateString()}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <CampaignDeleteButton
+                        campaignId={campaign.id}
+                        campaignName={campaign.name}
+                        leadCount={campaign._count.leads}
+                      />
                     </td>
                   </tr>
                 );
