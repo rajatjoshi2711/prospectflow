@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import type { CampaignLeadStatus } from "@prisma/client";
 import { ProspectTable, type ProspectRow, type ProspectSortKey } from "@/components/prospect-table";
-import { LEAD_STATUS_BADGE_CLASS, LEAD_STATUS_LABEL } from "@/lib/insights/status";
+import { LEAD_STATUS_LABEL } from "@/lib/insights/status";
 import type { CampaignLeadRow } from "@/lib/campaigns/leads";
 
 /**
@@ -177,6 +177,9 @@ export function CampaignLeadTable({
       extraColumn={{ header: "From your file" }}
       toolbar={toolbar}
       renderStatus={(row) => (
+        // The select IS the status display — it already shows the current
+        // value. A badge beside it repeating that same label was pure
+        // duplication, so only the transient save state is shown alongside.
         <div className="flex flex-col gap-1">
           <select
             className="ef-input"
@@ -194,12 +197,11 @@ export function CampaignLeadTable({
               </option>
             ))}
           </select>
-          <span
-            className={`ef-badge ${LEAD_STATUS_BADGE_CLASS[row.status]}`}
-            style={{ alignSelf: "flex-start" }}
-          >
-            {saving[row.id] ? "Saving…" : LEAD_STATUS_LABEL[row.status]}
-          </span>
+          {saving[row.id] ? (
+            <span className="ef-caption" style={{ color: "var(--text-secondary)" }}>
+              Saving…
+            </span>
+          ) : null}
         </div>
       )}
       emptyState={
