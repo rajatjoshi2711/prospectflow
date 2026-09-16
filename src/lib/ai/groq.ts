@@ -6,6 +6,7 @@ import {
   type LLMCompletion,
   type LLMMessage,
   type LLMProvider,
+  type LLMExecutedTool,
   type LLMToolCall,
 } from "@/lib/ai/provider";
 
@@ -68,6 +69,21 @@ export function createGroqProvider(): LLMProvider {
     model,
 
     async complete(options: LLMCompleteOptions): Promise<LLMCompletion> {
+      // Function tools and Groq's server-side built-ins share one `tools` array
+      // on the wire. A built-in entry is just `{ type: "<name>" }` — it carries
+      // no schema, because we never execute it.
+      const wireTools = [
+        ...(options.tools ?? []).map((tool) => ({
+          type: "function" as const,
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+          },
+        })),
+        ...(options.builtInTools ?? []).map((name) => ({ type: name })),
+      ];
+
       try {
         const response = await client.chat.completions.create(
           {
@@ -78,16 +94,12 @@ export function createGroqProvider(): LLMProvider {
             ...(options.responseFormat === "json_object"
               ? { response_format: { type: "json_object" as const } }
               : {}),
-            ...(options.tools && options.tools.length > 0
+            ...(wireTools.length > 0
               ? {
-                  tools: options.tools.map((tool) => ({
-                    type: "function" as const,
-                    function: {
-                      name: tool.name,
-                      description: tool.description,
-                      parameters: tool.parameters,
-                    },
-                  })),
+                  // Groq accepts built-in tool entries the OpenAI SDK's own
+                  // union does not know about, so this one field is cast rather
+                  // than loosening the typing of the whole request.
+                  tools: wireTools as OpenAI.Chat.ChatCompletionTool[],
                   tool_choice: options.toolChoice ?? ("auto" as const),
                 }
               : {}),
@@ -121,9 +133,27 @@ export function createGroqProvider(): LLMProvider {
           throw new LLMCallError("Groq returned an empty completion.", { retryable: true });
         }
 
+        // Groq reports its server-side tool runs here. Not in the SDK's types,
+        // and its `output` is free text, so it is read defensively and kept for
+        // observability only — never parsed for facts.
+        const rawExecuted = (
+          response as unknown as {
+            executed_tools?: { index?: number; type?: string; arguments?: string; output?: string }[];
+          }
+        ).executed_tools;
+        const executedTools: LLMExecutedTool[] = Array.isArray(rawExecuted)
+          ? rawExecuted.map((tool, position) => ({
+              index: typeof tool.index === "number" ? tool.index : position,
+              type: typeof tool.type === "string" ? tool.type : "unknown",
+              arguments: typeof tool.arguments === "string" ? tool.arguments : undefined,
+              output: typeof tool.output === "string" ? tool.output : undefined,
+            }))
+          : [];
+
         return {
           content,
           toolCalls,
+          executedTools,
           model: response.model ?? model,
           usage: response.usage
             ? {

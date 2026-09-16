@@ -70,6 +70,22 @@ export type ProspectNoteView = {
   canDelete: boolean;
 };
 
+/**
+ * One saved research run, ready to render.
+ *
+ * Org-visible and attributed like a note: the reader needs to know who paid for
+ * it and when, because "recent news" ages.
+ */
+export type ProspectResearchView = {
+  id: string;
+  summary: string;
+  /** Validated http(s) URLs. Empty means the run produced none — never a guess. */
+  citations: string[];
+  model: string;
+  createdAt: Date;
+  requestedByName: string;
+};
+
 export type ProspectDetail = {
   identityKey: string;
   name: string;
@@ -90,6 +106,8 @@ export type ProspectDetail = {
   coverage: OrgCoverageEntry[];
   organizationName: string;
   notes: ProspectNoteView[];
+  /** Saved research runs for this person in this org, newest first. */
+  research: ProspectResearchView[];
 };
 
 /**
@@ -192,9 +210,10 @@ export async function loadProspectDetail({
     [detailSource.firstName, detailSource.lastName].filter(Boolean).join(" ").trim() ||
     "Unnamed connection";
 
-  const [messages, notes, mark] = await Promise.all([
+  const [messages, notes, research, mark] = await Promise.all([
     loadMessages({ viewerBatchId: viewerBatch?.id ?? null, connection: viewerConnection }),
     loadNotes({ organizationId, identityKey, viewerId, viewerRole, memberName }),
+    loadResearch({ organizationId, identityKey, memberName }),
     // Marks are private to the viewer, so this reads only their own row.
     loadConnectionMarks(viewerId, [identityKey]).then((map) => map.get(identityKey) ?? null),
   ]);
@@ -236,6 +255,7 @@ export async function loadProspectDetail({
     }),
     organizationName: organization.name,
     notes,
+    research,
   };
 }
 
@@ -451,6 +471,49 @@ async function loadNotes({
     // Presentation only. The same rule is enforced in the DELETE route's WHERE
     // clause, which is what actually protects the row.
     canDelete: note.authorId === viewerId || viewerRole === "ADMIN",
+  }));
+}
+
+/**
+ * Saved research runs for this person, for this org.
+ *
+ * Same tenant boundary as notes: `ProspectResearch` is keyed by
+ * (organizationId, identityKey), and `identityKey` is a GLOBAL person key, so
+ * the org filter is the only thing stopping one company's paid-for research
+ * from surfacing in another's. Capped — the box shows the latest run and lists
+ * the rest, and nobody reads a hundred of them.
+ */
+async function loadResearch({
+  organizationId,
+  identityKey,
+  memberName,
+}: {
+  organizationId: string;
+  identityKey: string;
+  memberName: Map<string, string>;
+}): Promise<ProspectResearchView[]> {
+  const rows = await prisma.prospectResearch.findMany({
+    where: { organizationId, identityKey },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: {
+      id: true,
+      summary: true,
+      citations: true,
+      model: true,
+      createdAt: true,
+      requestedById: true,
+      requestedBy: { select: { name: true } },
+    },
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    summary: row.summary,
+    citations: row.citations,
+    model: row.model,
+    createdAt: row.createdAt,
+    requestedByName: row.requestedBy.name ?? memberName.get(row.requestedById) ?? "A colleague",
   }));
 }
 

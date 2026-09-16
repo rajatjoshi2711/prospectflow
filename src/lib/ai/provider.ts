@@ -48,6 +48,36 @@ export type LLMToolCall = {
   arguments: string;
 };
 
+/**
+ * A tool the PROVIDER runs on its own servers, rather than one we implement.
+ *
+ * Unlike `LLMToolDefinition` there is no local handler and no round trip: the
+ * provider executes it mid-completion and folds the result into the answer, so
+ * a call using one of these still returns finished prose in a single
+ * `complete()`. `browser_search` is Groq's server-side web search, supported by
+ * `openai/gpt-oss-120b`.
+ *
+ * ANYTHING A BUILT-IN TOOL RETRIEVES IS UNTRUSTED DATA. A web page can contain
+ * text addressed at the model; callers must say so in their system prompt and
+ * must never treat retrieved content as instructions.
+ */
+export type LLMBuiltInTool = "browser_search";
+
+/**
+ * A record of one built-in tool the provider ran for us.
+ *
+ * `output` is unstructured provider text — a human-readable trace, not a
+ * parseable result. It is exposed for logging and debugging only; never mine it
+ * for facts (citations included), because its shape is undocumented and can
+ * change without notice.
+ */
+export type LLMExecutedTool = {
+  index: number;
+  type: string;
+  arguments?: string;
+  output?: string;
+};
+
 export type LLMCompleteOptions = {
   messages: LLMMessage[];
   /**
@@ -73,8 +103,18 @@ export type LLMCompleteOptions = {
    * `auto` (the default when tools are given) lets the model choose; `none`
    * forces a plain text answer, which is how a tool-calling loop asks for the
    * final summary once its call budget is spent.
+   *
+   * `required` forces the model to use a tool before answering — the only way
+   * to stop it answering a "what happened recently" question from its training
+   * data instead of actually searching.
    */
-  toolChoice?: "auto" | "none";
+  toolChoice?: "auto" | "none" | "required";
+  /**
+   * Provider-executed tools for this turn (see `LLMBuiltInTool`). Independent
+   * of `tools`: these need no local handler, so the completion comes back as
+   * finished prose rather than as a request to call something.
+   */
+  builtInTools?: LLMBuiltInTool[];
 };
 
 export type LLMCompletion = {
@@ -85,6 +125,11 @@ export type LLMCompletion = {
    * empty-completion failure case.
    */
   toolCalls?: LLMToolCall[];
+  /**
+   * Built-in tools the provider ran server-side, when any were offered. Present
+   * for observability only — see `LLMExecutedTool`.
+   */
+  executedTools?: LLMExecutedTool[];
   model: string;
   usage?: { promptTokens: number; completionTokens: number };
 };

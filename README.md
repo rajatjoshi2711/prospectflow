@@ -65,6 +65,7 @@ cp .env.example .env
 | `CRON_SECRET` | Phase 6 | Shared secret for the nightly AI sweep at `/api/cron/ai-sweep`. Without it the route refuses with 503 rather than running unauthenticated. |
 | `AI_CHAT_LIMIT_PER_HOUR` / `AI_CHAT_LIMIT_PER_DAY` | No | Per-user ProspectAsk limits. Default `20` / `100`. |
 | `AI_RECOMPUTE_LIMIT_PER_HOUR` / `AI_RECOMPUTE_LIMIT_PER_DAY` | No | Per-user "re-score now" limits. Default `3` / `10`. |
+| `AI_RESEARCH_LIMIT_PER_HOUR` / `AI_RESEARCH_LIMIT_PER_DAY` | No | Per-user prospect research limits (live web search + generation). Default `10` / `30`. |
 | `AI_ORG_LIMIT_PER_DAY` | No | Org-wide daily ceiling across all AI-invoking requests. Default `600`. |
 | `AI_RATE_LIMIT_ENABLED` | No | Set to `false` to disable rate limiting (local development only). Anything else, including unset, leaves it on. |
 

@@ -11,6 +11,7 @@ import {
 import { LEAD_STATUS_BADGE_CLASS, LEAD_STATUS_LABEL } from "@/lib/insights/status";
 import { ConnectionMarkButtons } from "@/components/connection-mark-buttons";
 import { ProspectNotes } from "@/components/prospect-notes";
+import { ProspectResearch } from "@/components/prospect-research";
 
 /**
  * One person.
@@ -92,13 +93,33 @@ export default async function ProspectDetailPage({
       <ProspectHeader detail={detail} />
 
       <div className="flex flex-col gap-6">
-        <section className="ef-card">
-          <h2 className="ef-h3 mb-1">Messages with them so far</h2>
-          <p className="ef-caption mb-4">
-            Read-only, from your most recent completed LinkedIn import.
-          </p>
-          <MessagesBox detail={detail} />
-        </section>
+        {/* Messages and research sit side by side: what you have already said to
+            them, next to what the outside world says about them. Same
+            wrap-at-a-basis pattern as the coverage/notes row below, so both
+            columns fall to full width on a narrow screen without a breakpoint
+            class — see `nav-shell.tsx` for the app's responsive behaviour. */}
+        <div className="flex flex-wrap gap-6">
+          <section className="ef-card" style={{ flex: "1 1 340px", minWidth: 300 }}>
+            <h2 className="ef-h3 mb-1">Messages with them so far</h2>
+            <p className="ef-caption mb-4">
+              Read-only, from your most recent completed LinkedIn import.
+            </p>
+            <MessagesBox detail={detail} />
+          </section>
+
+          <section className="ef-card" style={{ flex: "1 1 340px", minWidth: 300 }}>
+            <h2 className="ef-h3 mb-1">Research</h2>
+            <p className="ef-caption mb-4">
+              Recent news and one opening angle, from a live web search. Shared with everyone in{" "}
+              {detail.organizationName}.
+            </p>
+            <ProspectResearch
+              identityKey={detail.identityKey}
+              personName={detail.name}
+              research={detail.research}
+            />
+          </section>
+        </div>
 
         <div className="flex flex-wrap gap-6">
           <section className="ef-card" style={{ flex: "1 1 340px", minWidth: 300 }}>

@@ -43,7 +43,7 @@ export function isRateLimitEnabled(): boolean {
   return process.env.AI_RATE_LIMIT_ENABLED?.trim().toLowerCase() !== "false";
 }
 
-export type AiAction = "prospect-ask" | "recompute";
+export type AiAction = "prospect-ask" | "recompute" | "prospect-research";
 
 export type ActionLimits = {
   /** Counter bucket name, also the `AiUsageCounter.bucket` value. */
@@ -65,6 +65,19 @@ export function getActionLimits(action: AiAction): ActionLimits {
         perHour: readPositiveInt("AI_RECOMPUTE_LIMIT_PER_HOUR", 3),
         perDay: readPositiveInt("AI_RECOMPUTE_LIMIT_PER_DAY", 10),
         label: "re-score requests",
+      };
+    case "prospect-research":
+      return {
+        bucket: "prospect-research",
+        // The most expensive single request in the app: a live web search plus
+        // a generation over what it retrieved, and the result is SAVED and
+        // org-visible, so a colleague reads the existing run rather than paying
+        // for a duplicate. Tighter than chat on purpose — researching ten
+        // people in an hour is a real session; researching the same person ten
+        // times is not.
+        perHour: readPositiveInt("AI_RESEARCH_LIMIT_PER_HOUR", 10),
+        perDay: readPositiveInt("AI_RESEARCH_LIMIT_PER_DAY", 30),
+        label: "prospect research runs",
       };
     case "prospect-ask":
     default:

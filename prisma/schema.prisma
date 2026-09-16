@@ -33,6 +33,7 @@ model Organization {
   channelPartners  ChannelPartner[]
   quickSuggestions QuickSuggestion[]
   prospectNotes    ProspectNote[]
+  prospectResearch ProspectResearch[]
 }
 
 model User {
@@ -65,6 +66,7 @@ model User {
   quickSuggestions           QuickSuggestion[]
   connectionMarks            ConnectionMark[]
   prospectNotes              ProspectNote[]
+  prospectResearch           ProspectResearch[]
 
   @@index([organizationId])
 }
@@ -595,6 +597,41 @@ model ProspectNote {
   /// The only read path: one person's notes for one org, newest first.
   @@index([organizationId, identityKey, createdAt])
   @@index([authorId])
+}
+
+/// One saved run of live web research about a prospect and their company.
+///
+/// ORG-VISIBLE AND ATTRIBUTED, exactly like `ProspectNote`. A run costs a web
+/// search plus a generation — the most expensive call in the app — so a
+/// colleague opening the same person should read what has already been paid
+/// for rather than buying it again. Attribution is what makes that safe to
+/// trust: the reader can see who ran it and when, and judge how stale "recent
+/// news" has become.
+///
+/// APPEND-ONLY. Re-running adds a row; nothing is overwritten, so an earlier
+/// angle someone acted on stays readable.
+model ProspectResearch {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// The stable person key — see the note above.
+  identityKey    String
+  requestedById  String
+  requestedBy    User         @relation(fields: [requestedById], references: [id], onDelete: Cascade)
+  /// The model's prose, with its inline citation markers already stripped.
+  summary        String
+  /// Bare http(s) URLs extracted from the answer's own `Sources:` list and
+  /// validated. Empty when the model returned none — never back-filled with a
+  /// guess, because an invented citation is worse than no citation.
+  citations      String[]
+  /// Which model slug produced it, so an old row is never mistaken for a
+  /// current one after a model change.
+  model          String
+  createdAt      DateTime     @default(now())
+
+  /// The only read path: one person's research for one org, newest first.
+  @@index([organizationId, identityKey, createdAt])
+  @@index([requestedById])
 }
 
 
