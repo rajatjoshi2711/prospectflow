@@ -1,4 +1,5 @@
 import { tryGetLLMProvider, parseJsonResponse } from "@/lib/ai";
+import type { LLMCallContext } from "@/lib/ai/provider";
 import type { SpreadsheetRow } from "@/lib/campaigns/parse-spreadsheet";
 import type { ColumnDetection } from "@/lib/campaigns/detection-types";
 
@@ -124,6 +125,12 @@ function buildPrompt(headers: string[], rows: SpreadsheetRow[]) {
 export async function detectLinkedinColumn(
   headers: string[],
   rows: SpreadsheetRow[],
+  /**
+   * Attribution for the AI audit log. Required even though detection runs in a
+   * background worker: a campaign belongs to one person in one org, and their
+   * admin should see this call beside every other one they paid for.
+   */
+  context: LLMCallContext,
 ): Promise<ColumnDetection> {
   const confident = detectByHeuristic(headers, rows);
   if (confident) return confident;
@@ -139,6 +146,7 @@ export async function detectLinkedinColumn(
 
   try {
     const completion = await provider.complete({
+      context,
       messages: buildPrompt(headers, rows),
       responseFormat: "json_object",
       temperature: 0,

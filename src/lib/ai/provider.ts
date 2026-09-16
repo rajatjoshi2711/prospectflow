@@ -7,7 +7,34 @@
  * `src/lib/ai/index.ts` plus one new implementation file — no caller changes.
  */
 
+import type { AiUseCase } from "@prisma/client";
+
 export type LLMRole = "system" | "user" | "assistant" | "tool";
+
+/**
+ * Who a call is being made for, and what for.
+ *
+ * REQUIRED on every completion, deliberately. Making it optional would mean the
+ * one call site that forgot it produces unattributed rows in the audit log, and
+ * unattributed rows in a multi-tenant cost table are worse than useless — they
+ * cannot be shown to anyone. A missing context is a compile error instead.
+ *
+ * Nothing here is ever derived from model output; it comes from the verified
+ * session, or from the org the background job was scheduled for.
+ */
+export type LLMCallContext = {
+  /** The tenant to bill. Never nullable — see `AiCallLog` in schema.prisma. */
+  organizationId: string;
+  /**
+   * The human who triggered the call, or NULL for an org-wide scheduled sweep
+   * that nobody asked for individually. Null is a real, expected value, not a
+   * placeholder for "we could not work it out".
+   */
+  userId: string | null;
+  useCase: AiUseCase;
+};
+
+export type { AiUseCase };
 
 export type LLMMessage = {
   role: LLMRole;
@@ -80,6 +107,12 @@ export type LLMExecutedTool = {
 
 export type LLMCompleteOptions = {
   messages: LLMMessage[];
+  /**
+   * Caller attribution for the AI audit log. Recorded at the provider, not at
+   * the call site, so no feature can opt out of accounting by forgetting to
+   * log. See `src/lib/ai/usage-log.ts`.
+   */
+  context: LLMCallContext;
   /**
    * `json_object` asks the model to emit a single valid JSON object. Groq
    * supports OpenAI's `response_format`, so this maps straight through.

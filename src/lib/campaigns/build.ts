@@ -61,7 +61,13 @@ async function markFailed(campaignId: string, error: unknown) {
  * column choice drives every downstream match, so a human confirms it first.
  */
 export async function detectCampaignColumns(campaignId: string) {
-  const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    // The owner's org comes with the campaign so the detection call can be
+    // attributed to a tenant. A Campaign is per-user and carries no
+    // organizationId of its own.
+    include: { user: { select: { organizationId: true } } },
+  });
   if (!campaign) throw new NonRetriableError(`Campaign ${campaignId} not found`);
   if (!campaign.blobUrl) throw new NonRetriableError(`Campaign ${campaignId} has no uploaded file`);
   // Already past detection (a duplicate webhook, or a replayed run) — do not
@@ -84,7 +90,11 @@ export async function detectCampaignColumns(campaignId: string) {
       throw new SpreadsheetParseError("That file has a header row but no data rows.");
     }
 
-    const detection = await detectLinkedinColumn(headers, rows);
+    const detection = await detectLinkedinColumn(headers, rows, {
+      organizationId: campaign.user.organizationId,
+      userId: campaign.userId,
+      useCase: "CAMPAIGN_COLUMN_DETECTION",
+    });
 
     await prisma.campaign.update({
       where: { id: campaignId },

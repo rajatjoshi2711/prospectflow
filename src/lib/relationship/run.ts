@@ -301,11 +301,28 @@ async function runScoring(userId: string): Promise<RelationshipRunSummary> {
     features: featuresById.get(connection.id) ?? emptyFeatures(),
   }));
 
-  const provider = tryGetLLMProvider();
+  // The run is keyed by user, but AI spend is accounted per ORG, so the tenant
+  // is resolved here rather than threaded through every caller. Looked up only
+  // when there is actually something to score, so the no-import and no-signal
+  // exits above still cost nothing.
+  const owner = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { organizationId: true },
+  });
+
+  // No org means the user was deleted while the job was in flight. Fall back to
+  // the deterministic path rather than spending money that cannot be attributed
+  // to any tenant — an unattributable row can never be shown to an admin.
+  const provider = owner ? tryGetLLMProvider() : null;
   summary.heuristicOnly = provider === null;
 
   const { scored, llmCalls, degradedBatches } = await scoreRelationships({
     provider,
+    context: {
+      organizationId: owner?.organizationId ?? "",
+      userId,
+      useCase: "RELATIONSHIP_SCORING",
+    },
     candidates,
   });
   summary.llmCalls = llmCalls;

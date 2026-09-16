@@ -1,4 +1,9 @@
-import { LLMCallError, parseJsonResponse, type LLMProvider } from "@/lib/ai/provider";
+import {
+  LLMCallError,
+  parseJsonResponse,
+  type LLMCallContext,
+  type LLMProvider,
+} from "@/lib/ai/provider";
 import {
   heuristicScore,
   type RelationshipFeatures,
@@ -120,11 +125,14 @@ function coerceResults(payload: unknown): Map<string, { score: number; rationale
 
 export async function scoreRelationships({
   provider,
+  context,
   candidates,
   batchSize = BATCH_SIZE,
   signal,
 }: {
   provider: LLMProvider | null;
+  /** Attribution for the AI audit log, from the caller that owns the run. */
+  context: LLMCallContext;
   candidates: RelationshipCandidate[];
   batchSize?: number;
   signal?: AbortSignal;
@@ -146,6 +154,7 @@ export async function scoreRelationships({
     const batch = candidates.slice(index, index + batchSize);
     try {
       const completion = await provider.complete({
+        context,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: `PEOPLE:\n${batch.map(featureLine).join("\n")}` },

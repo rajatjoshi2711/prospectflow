@@ -1,7 +1,11 @@
 import "server-only";
 
 import { getLLMProvider } from "@/lib/ai";
-import { LLMCallError, LLMConfigurationError } from "@/lib/ai/provider";
+import {
+  LLMCallError,
+  LLMConfigurationError,
+  type LLMCallContext,
+} from "@/lib/ai/provider";
 
 /**
  * Live web research about one prospect and their company.
@@ -110,7 +114,11 @@ export class ResearchUnavailableError extends Error {
   }
 }
 
-export async function runProspectResearch(subject: ResearchSubject): Promise<ResearchResult> {
+export async function runProspectResearch(
+  subject: ResearchSubject,
+  /** Attribution for the AI audit log. From the verified session at the route. */
+  context: LLMCallContext,
+): Promise<ResearchResult> {
   let provider;
   try {
     provider = getLLMProvider();
@@ -129,6 +137,7 @@ export async function runProspectResearch(subject: ResearchSubject): Promise<Res
   let completion;
   try {
     completion = await provider.complete({
+      context,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: buildUserPrompt(subject) },

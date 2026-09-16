@@ -151,6 +151,12 @@ export async function runChatTurn({
       const lastRound = round === MAX_TOOL_ROUNDS;
       modelCalls += 1;
       const completion = await provider.complete({
+        // `scope` came from the verified session — see this function's header.
+        context: {
+          organizationId: scope.organizationId,
+          userId: scope.userId,
+          useCase: "PROSPECT_ASK",
+        },
         messages,
         // On the final round tools are withdrawn, which forces prose. Without
         // this a model that keeps asking for tools would never produce an answer.

@@ -187,6 +187,9 @@ export async function computeQuickSuggestionsForOrg(
   if (provider) {
     try {
       const completion = await provider.complete({
+        // A scheduled org-wide sweep: nobody asked for it, so userId is null.
+        // The org is still attributed, which is what the cost dashboard needs.
+        context: { organizationId, userId: null, useCase: "QUICK_SUGGESTIONS" },
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           {

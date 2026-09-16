@@ -44,6 +44,7 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin/users", label: "Users" },
   { href: "/admin/icps", label: "ICP definitions" },
   { href: "/admin/channel-partners", label: "Channel partner definitions" },
+  { href: "/admin/ai-audit", label: "AI audit" },
 ];
 
 function isActive(pathname: string, href: string) {

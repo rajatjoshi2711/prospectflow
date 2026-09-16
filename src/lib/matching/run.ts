@@ -191,6 +191,14 @@ export async function computeMatchesForUser({
 
     const { scored, llmCalls, degradedBatches } = await scoreShortlist({
       provider,
+      // One definition is either an ICP or a channel partner, so the use case
+      // is decided per definition rather than per run — otherwise the audit
+      // log would collapse two features an admin wants to compare into one.
+      context: {
+        organizationId,
+        userId,
+        useCase: definition.kind === "ICP" ? "ICP_MATCHING" : "CHANNEL_PARTNER_MATCHING",
+      },
       definition,
       hits,
     });

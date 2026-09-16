@@ -64,7 +64,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await runProspectResearch(subject);
+    const result = await runProspectResearch(subject, {
+      organizationId,
+      userId,
+      useCase: "PROSPECT_RESEARCH",
+    });
 
     const saved = await prisma.prospectResearch.create({
       data: {

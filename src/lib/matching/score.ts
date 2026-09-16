@@ -1,6 +1,7 @@
 import {
   LLMCallError,
   parseJsonResponse,
+  type LLMCallContext,
   type LLMProvider,
 } from "@/lib/ai/provider";
 import type { MatchDefinition, PrefilterHit } from "@/lib/matching/prefilter";
@@ -129,12 +130,16 @@ export function heuristicResult(hit: PrefilterHit): ScoredCandidate {
  */
 export async function scoreShortlist({
   provider,
+  context,
   definition,
   hits,
   batchSize = BATCH_SIZE,
   signal,
 }: {
   provider: LLMProvider | null;
+  /** Attribution for the AI audit log. Supplied by the caller, which knows the
+   * user and org the run belongs to; never inferred here. */
+  context: LLMCallContext;
   definition: MatchDefinition;
   hits: PrefilterHit[];
   batchSize?: number;
@@ -154,6 +159,7 @@ export async function scoreShortlist({
     const batch = hits.slice(index, index + batchSize);
     try {
       const completion = await provider.complete({
+        context,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           {

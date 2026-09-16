@@ -34,6 +34,7 @@ model Organization {
   quickSuggestions QuickSuggestion[]
   prospectNotes    ProspectNote[]
   prospectResearch ProspectResearch[]
+  aiCallLogs       AiCallLog[]
 }
 
 model User {
@@ -67,6 +68,7 @@ model User {
   connectionMarks            ConnectionMark[]
   prospectNotes              ProspectNote[]
   prospectResearch           ProspectResearch[]
+  aiCallLogs                 AiCallLog[]
 
   @@index([organizationId])
 }
@@ -715,6 +717,102 @@ model AiUsageCounter {
 
   @@unique([subjectKey, bucket, windowKind, windowStart])
   @@index([windowStart])
+}
+
+/// What a model call was for. An enum rather than a free string because this is
+/// a reporting dimension an admin filters and groups by: a typo'd
+/// "prospect-ask " would silently split a bar on the dashboard in two.
+enum AiUseCase {
+  ICP_MATCHING
+  CHANNEL_PARTNER_MATCHING
+  RELATIONSHIP_SCORING
+  QUICK_SUGGESTIONS
+  PROSPECT_ASK
+  CAMPAIGN_COLUMN_DETECTION
+  PROSPECT_RESEARCH
+}
+
+/// Outcome of one call. Failures are recorded too — a call that errored after
+/// the provider generated tokens still costs money, and a burst of ERROR rows
+/// is the first thing worth seeing when AI features "go quiet".
+enum AiCallStatus {
+  OK
+  ERROR
+}
+
+/// One row per LLM call, written at the single choke point in
+/// `src/lib/ai/groq.ts`.
+///
+/// NO PROMPT OR RESPONSE CONTENT IS STORED HERE, EVER. Messages carry prospect
+/// names, employers and the user's own questions; none of that is needed to
+/// account for cost, and keeping it would turn the fastest-growing table in the
+/// app into a copy of the most sensitive data in it. Metadata only.
+///
+/// GROWTH: this table gets a row per model call, so it outgrows everything
+/// else. Every dashboard query is therefore an aggregate pushed into SQL,
+/// covered by the composite indexes below — all of which lead with
+/// `organizationId` because there is no query in the product that is not first
+/// scoped to one tenant.
+model AiCallLog {
+  id             String       @id @default(cuid())
+  /// The tenant this call was made on behalf of. NEVER nullable: it is the
+  /// only thing separating one org's spend from another's.
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// The human who triggered it, or NULL for an org-wide cron sweep (quick
+  /// suggestions) that no one asked for individually. `onDelete: SetNull`
+  /// rather than Cascade: removing a member must not silently erase the
+  /// organization's spend history.
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  useCase        AiUseCase
+  /// Provider id (`groq`), kept beside the model so a future second vendor is
+  /// distinguishable even if two vendors share a model slug.
+  provider       String
+  /// Model as the PROVIDER reported it, falling back to the configured slug
+  /// when a failure meant no response came back.
+  model          String
+  status         AiCallStatus
+  /// Coarse failure class for ERROR rows — an HTTP status (`http_429`),
+  /// `timeout`, `empty_completion`, `unknown`. Never the raw provider message,
+  /// which can quote the prompt back at us.
+  errorKind      String?
+  promptTokens     Int @default(0)
+  completionTokens Int @default(0)
+  totalTokens      Int @default(0)
+  /// False when the response carried no `usage` block (every failed call, and
+  /// defensively for a provider that omits it). Distinguishes "this call used
+  /// zero tokens" from "we do not know", which a bare 0 cannot.
+  usageReported    Boolean @default(false)
+  /// True when the call offered provider-executed tools (`browser_search`).
+  /// Those may carry a per-search charge we cannot see in the response, so
+  /// these rows are known to UNDER-report. See src/lib/ai/pricing.ts.
+  usedBuiltInTools Boolean @default(false)
+  /// The rates this row was costed at, in USD per million tokens, frozen at
+  /// write time. Stored per row so editing the rate card later reprices only
+  /// FUTURE calls — history must not silently rewrite itself. NULL together
+  /// with `costUsd` when the model is not on the rate card.
+  inputRatePerMillionUsd  Decimal? @db.Decimal(12, 6)
+  outputRatePerMillionUsd Decimal? @db.Decimal(12, 6)
+  /// Estimated cost. `Decimal`, not `Float`: summing hundreds of thousands of
+  /// sub-cent values in binary floating point accumulates visible error, and
+  /// this number is read as money. NULL means UNKNOWN (unpriced model or no
+  /// usage reported) and the UI says so rather than showing $0.00.
+  costUsd                 Decimal? @db.Decimal(18, 10)
+  /// Wall-clock duration of the call including SDK retries. Cheap to capture
+  /// and the fastest way to tell a cost spike from a latency problem.
+  latencyMs      Int
+  createdAt      DateTime @default(now())
+
+  /// Time-window totals (last hour / today / week / month) and the transaction
+  /// list's default ordering.
+  @@index([organizationId, createdAt])
+  /// Top users.
+  @@index([organizationId, userId, createdAt])
+  /// Use-case distribution and the use-case filter.
+  @@index([organizationId, useCase, createdAt])
+  /// Model distribution and the model filter.
+  @@index([organizationId, model, createdAt])
 }
 
 model ChatMessage {

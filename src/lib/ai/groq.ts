@@ -9,6 +9,7 @@ import {
   type LLMExecutedTool,
   type LLMToolCall,
 } from "@/lib/ai/provider";
+import { classifyError, recordAiCall } from "@/lib/ai/usage-log";
 
 /**
  * Groq implementation of `LLMProvider`.
@@ -69,6 +70,10 @@ export function createGroqProvider(): LLMProvider {
     model,
 
     async complete(options: LLMCompleteOptions): Promise<LLMCompletion> {
+      // Started before the request is even built, so a slow serialization of a
+      // large batch shows up in latency rather than hiding in it.
+      const startedAt = Date.now();
+      const usedBuiltInTools = (options.builtInTools ?? []).length > 0;
       // Function tools and Groq's server-side built-ins share one `tools` array
       // on the wire. A built-in entry is just `{ type: "<name>" }` — it carries
       // no schema, because we never execute it.
@@ -83,6 +88,13 @@ export function createGroqProvider(): LLMProvider {
         })),
         ...(options.builtInTools ?? []).map((name) => ({ type: name })),
       ];
+
+      // Hoisted out of the `try` so the failure path can still log whatever the
+      // provider told us before things went wrong. An empty completion, for
+      // instance, is an error that has already generated (and been billed for)
+      // its prompt tokens.
+      let observedModel = model;
+      let observedUsage: { promptTokens: number; completionTokens: number } | null = null;
 
       try {
         const response = await client.chat.completions.create(
@@ -109,6 +121,21 @@ export function createGroqProvider(): LLMProvider {
             signal: options.signal,
           },
         );
+
+        observedModel = response.model ?? model;
+        // `usage` is optional in the SDK's response type and Groq is not
+        // contractually obliged to send it, so every field is read
+        // defensively. `total_tokens` is not stored as reported — it is
+        // recomputed from the two parts, which is the only way the column and
+        // its components can never disagree.
+        const rawUsage = response.usage;
+        observedUsage = rawUsage
+          ? {
+              promptTokens: typeof rawUsage.prompt_tokens === "number" ? rawUsage.prompt_tokens : 0,
+              completionTokens:
+                typeof rawUsage.completion_tokens === "number" ? rawUsage.completion_tokens : 0,
+            }
+          : null;
 
         const choice = response.choices?.[0]?.message;
         const content = choice?.content ?? "";
@@ -150,21 +177,51 @@ export function createGroqProvider(): LLMProvider {
             }))
           : [];
 
+        // Awaited, not fire-and-forget: on Vercel a floating promise can be
+        // cut off when the lambda freezes after the response is returned, which
+        // would drop rows non-deterministically. `recordAiCall` never throws
+        // and never retries, so the wait is one short insert.
+        await recordAiCall({
+          organizationId: options.context.organizationId,
+          userId: options.context.userId,
+          useCase: options.context.useCase,
+          provider: "groq",
+          model: observedModel,
+          status: "OK",
+          promptTokens: observedUsage?.promptTokens ?? 0,
+          completionTokens: observedUsage?.completionTokens ?? 0,
+          usageReported: observedUsage !== null,
+          usedBuiltInTools,
+          latencyMs: Date.now() - startedAt,
+        });
+
         return {
           content,
           toolCalls,
           executedTools,
-          model: response.model ?? model,
-          usage: response.usage
-            ? {
-                promptTokens: response.usage.prompt_tokens ?? 0,
-                completionTokens: response.usage.completion_tokens ?? 0,
-              }
-            : undefined,
+          model: observedModel,
+          usage: observedUsage ?? undefined,
         };
       } catch (error) {
-        if (error instanceof LLMCallError) throw error;
-        throw toCallError(error);
+        const callError = error instanceof LLMCallError ? error : toCallError(error);
+        // A failed call still costs whatever the provider generated before it
+        // gave up, and an ERROR row is the debugging record. Logged before the
+        // rethrow so no failure path can skip it.
+        await recordAiCall({
+          organizationId: options.context.organizationId,
+          userId: options.context.userId,
+          useCase: options.context.useCase,
+          provider: "groq",
+          model: observedModel,
+          status: "ERROR",
+          errorKind: classifyError(callError),
+          promptTokens: observedUsage?.promptTokens ?? 0,
+          completionTokens: observedUsage?.completionTokens ?? 0,
+          usageReported: observedUsage !== null,
+          usedBuiltInTools,
+          latencyMs: Date.now() - startedAt,
+        });
+        throw callError;
       }
     },
   };
