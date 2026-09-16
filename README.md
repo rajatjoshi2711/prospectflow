@@ -62,6 +62,7 @@ cp .env.example .env
 | `GROQ_API_KEY` | Phase 4 — optional | Groq API key for GPT-OSS-120B (`https://api.groq.com/openai/v1`), used to score and explain ICP / channel-partner matches. Get one at [console.groq.com/keys](https://console.groq.com/keys). **Without it the app still works**: matching falls back to the deterministic keyword pre-filter and labels each rationale "(AI scoring unavailable)". Nothing is instantiated at module load, so a missing key never breaks an unrelated route. |
 | `LLM_PROVIDER` | No | Selects the provider implementation in `src/lib/ai/index.ts`. Defaults to `groq`; that is the only value today. |
 | `GROQ_MODEL` | No | Overrides the model slug. Defaults to `openai/gpt-oss-120b` (the `openai/` prefix is part of Groq's model id, not a vendor switch). |
+| `GROQ_FALLBACK_MODEL` | No | Model used when the primary is out of credits, over quota, or rate limited. Defaults to `openai/gpt-oss-20b` — half the price, same `browser_search` support, its own capacity. Set to an empty value to disable the fallback and let those failures surface. Each attempt is logged separately in the AI audit log. |
 | `CRON_SECRET` | Phase 6 | Shared secret for the nightly AI sweep at `/api/cron/ai-sweep`. Without it the route refuses with 503 rather than running unauthenticated. |
 | `AI_CHAT_LIMIT_PER_HOUR` / `AI_CHAT_LIMIT_PER_DAY` | No | Per-user ProspectAsk limits. Default `20` / `100`. |
 | `AI_RECOMPUTE_LIMIT_PER_HOUR` / `AI_RECOMPUTE_LIMIT_PER_DAY` | No | Per-user "re-score now" limits. Default `3` / `10`. |

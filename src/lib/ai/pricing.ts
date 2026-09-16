@@ -52,6 +52,12 @@ export const RATE_CARD_SOURCE =
 
 const DEFAULT_RATES: Record<string, ModelRates> = {
   "openai/gpt-oss-120b": { inputPerMillionUsd: 0.15, outputPerMillionUsd: 0.6 },
+  // The credit fallback (see GROQ_FALLBACK_MODEL). Priced here so a run that
+  // failed over does not land in the dashboard as "cost unknown" — exactly the
+  // moment an admin most wants to see what the switch actually cost. Same
+  // provenance and September 2026 reading as the 120b rates above; it is half
+  // the price on both sides.
+  "openai/gpt-oss-20b": { inputPerMillionUsd: 0.075, outputPerMillionUsd: 0.3 },
 };
 
 /**
