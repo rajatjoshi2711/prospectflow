@@ -8,6 +8,7 @@ import {
 } from "@/lib/insights/relationship";
 import { loadInteractionSignals } from "@/lib/insights/load-signals";
 import { loadStoredRelationshipScores } from "@/lib/insights/load-stored-scores";
+import { loadConnectionMarks } from "@/lib/insights/marks";
 import { toPersonRef } from "@/lib/insights/signals";
 import { deriveLeadStatus } from "@/lib/insights/status";
 import type { ProspectRow, ProspectSortKey } from "@/components/prospect-table";
@@ -156,11 +157,16 @@ export async function fetchProspectPage({
   });
 
   const refs = connections.map(toPersonRef);
-  const [signals, storedScores] = await Promise.all([
+  const [signals, storedScores, marks] = await Promise.all([
     loadInteractionSignals(importBatchId, refs),
     loadStoredRelationshipScores(
       userId,
       connections.map((connection) => connection.id),
+    ),
+    // One query for the page's keys, not one per row.
+    loadConnectionMarks(
+      userId,
+      connections.map((connection) => connection.identityKey),
     ),
   ]);
 
@@ -183,6 +189,10 @@ export async function fetchProspectPage({
     });
     return {
       id: connection.id,
+      identityKey,
+      // Marks are keyed on identityKey, so they follow the person across
+      // imports even though `connection.id` does not.
+      mark: marks.get(identityKey) ?? null,
       firstName: connection.firstName,
       lastName: connection.lastName,
       company: connection.company,

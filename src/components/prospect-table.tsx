@@ -2,8 +2,9 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode } from "react";
-import type { CampaignLeadStatus } from "@prisma/client";
+import type { CampaignLeadStatus, ConnectionMarkValue } from "@prisma/client";
 import { LEAD_STATUS_BADGE_CLASS, LEAD_STATUS_LABEL } from "@/lib/insights/status";
+import { ConnectionMarkButtons } from "@/components/connection-mark-buttons";
 
 /**
  * The shared prospect table.
@@ -51,6 +52,14 @@ export type ProspectRow = {
    * panel was previously the only place that said which.
    */
   relationshipBasis?: "ai" | "heuristic" | null;
+  /**
+   * The person's stable cross-import key. Only the views that opt into
+   * `markable` need it, so it is optional: `MatchRow` and the campaign lead
+   * rows build `ProspectRow`s from their own shapes and are unaffected.
+   */
+  identityKey?: string;
+  /** The signed-in user's thumbs up/down on this person. Undefined = view does not show marks. */
+  mark?: ConnectionMarkValue | null;
   /** Rendered into the optional extra column. */
   extra?: ReactNode;
 };
@@ -79,6 +88,14 @@ export type ProspectTableProps = {
    * shown everywhere.
    */
   strengthSortable?: boolean;
+  /**
+   * Adds the thumbs up / thumbs down column. Off by default, the same reason
+   * `strengthSortable` is: only a view whose query actually loads marks (and
+   * supplies `ProspectRow.identityKey`) can render the control honestly, and a
+   * campaign lead row is a spreadsheet row, not necessarily a person in the
+   * user's own network.
+   */
+  markable?: boolean;
   /** Hide the search box for views that filter some other way. */
   showSearch?: boolean;
   searchPlaceholder?: string;
@@ -116,6 +133,7 @@ export function ProspectTable({
   extraColumn,
   emptyState,
   strengthSortable = false,
+  markable = false,
   showSearch = true,
   searchPlaceholder = "Search by name or company…",
   renderStatus,
@@ -146,7 +164,7 @@ export function ProspectTable({
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const firstRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const lastRow = Math.min(page * pageSize, total);
-  const columnCount = 4 + (extraColumn ? 1 : 0);
+  const columnCount = 4 + (markable ? 1 : 0) + (extraColumn ? 1 : 0);
 
   return (
     <div className="flex flex-col gap-4">
@@ -226,6 +244,11 @@ export function ProspectTable({
                       "Relationship strength"
                     )}
                   </th>
+                  {markable ? (
+                    <th className="ef-small px-5 py-3" style={{ fontWeight: 700 }}>
+                      Your take
+                    </th>
+                  ) : null}
                   {extraColumn ? (
                     <th className="ef-small px-5 py-3" style={{ fontWeight: 700 }}>
                       {extraColumn.sortKey ? (
@@ -295,6 +318,25 @@ export function ProspectTable({
                           basis={row.relationshipBasis ?? null}
                         />
                       </td>
+                      {markable ? (
+                        <td className="px-5 py-3">
+                          {row.identityKey ? (
+                            <ConnectionMarkButtons
+                              // Remounts when the saved value changes (e.g. a
+                              // router.refresh after a write), so the control's
+                              // local optimistic state never outlives it.
+                              key={`${row.identityKey}:${row.mark ?? "none"}`}
+                              identityKey={row.identityKey}
+                              personName={displayName(row)}
+                              initialValue={row.mark ?? null}
+                            />
+                          ) : (
+                            <span className="ef-caption" style={{ color: "var(--neutral-400)" }}>
+                              —
+                            </span>
+                          )}
+                        </td>
+                      ) : null}
                       {extraColumn ? <td className="ef-small px-5 py-3">{row.extra ?? "—"}</td> : null}
                     </tr>
                   ))

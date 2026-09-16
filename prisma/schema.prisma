@@ -62,6 +62,7 @@ model User {
   chatMessages               ChatMessage[]
   relationshipStrengthScores RelationshipStrengthScore[]
   quickSuggestions           QuickSuggestion[]
+  connectionMarks            ConnectionMark[]
 
   @@index([organizationId])
 }
@@ -502,6 +503,57 @@ model RelationshipStrengthScore {
   @@index([userId])
   @@index([connectionId])
   @@index([userId, score])
+}
+
+enum ConnectionMarkValue {
+  UP
+  DOWN
+}
+
+/// One member's thumbs up / thumbs down on one PERSON.
+///
+/// WHY IT IS KEYED ON `identityKey` AND NOT ON `connectionId`
+/// ---------------------------------------------------------
+/// `Connection` rows are per import batch: every upload writes a whole new set
+/// of rows with new ids, and the dashboards read the latest COMPLETE batch. A
+/// mark keyed on `connectionId` would therefore be orphaned by the very next
+/// import — the user would re-mark the same people after every upload, which
+/// is precisely the thing this feature exists to avoid. `identityKey` is the
+/// stable person key ingestion already writes
+/// (src/lib/ingestion/identity-key.ts): `url:<normalized profile url>` for
+/// essentially every Connections.csv row. It is the same key
+/// `src/lib/campaigns/link.ts` uses to re-link leads across imports.
+///
+/// The weak `nameKey` is deliberately NOT part of the key here. It is
+/// non-unique — two different people sharing a display name share a nameKey —
+/// and a name-key fallback would silently move one person's mark onto another
+/// person's row. A wrong relationship hint is recoverable; a wrong opinion
+/// attached to the wrong face is not worth the extra coverage, especially when
+/// the strong key already covers essentially every connection.
+///
+/// PRIVATE TO THE USER: a mark is one member's read of a person, exactly like
+/// `RelationshipStrengthScore`. It is never org-wide, so every query is scoped
+/// by `userId` and the unique constraint carries `userId` first.
+///
+/// ABSENCE IS MEANINGFUL: no row means "not marked". Clearing a mark deletes
+/// the row rather than storing a third "neutral" value, so there is exactly
+/// one representation of "no opinion".
+model ConnectionMark {
+  id          String             @id @default(cuid())
+  userId      String
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The stable person key — see the note above. Not an FK: the person it
+  /// names outlives any individual `Connection` row.
+  identityKey String
+  value       ConnectionMarkValue
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  /// Makes the upsert target exact and enforces "one opinion per person".
+  @@unique([userId, identityKey])
+  /// Backs the page read in `fetchProspectPage`: one query for the whole page,
+  /// `userId` plus `identityKey IN (...)`.
+  @@index([userId])
 }
 
 /// "Who should reach out to whom, for what" — org-wide, spanning every member's

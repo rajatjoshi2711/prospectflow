@@ -82,6 +82,7 @@ export default async function ConnectionsDashboardPage({
         sort={params.sort}
         direction={params.direction}
         strengthSortable
+        markable
         query={params.query}
         emptyState={
           params.query ? (
