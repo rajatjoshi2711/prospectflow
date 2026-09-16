@@ -349,6 +349,19 @@ const DIRECTION_LABEL: Record<ProspectMessage["direction"], string> = {
   unknown: "Direction unknown",
 };
 
+/**
+ * One message, as a chat bubble.
+ *
+ * Outgoing sits right and tinted, incoming sits left and neutral — the
+ * convention every messaging app uses, so the direction of a conversation is
+ * readable at a glance without reading the labels.
+ *
+ * A message whose direction ingestion could not determine gets neither side.
+ * It is centered and muted instead, because putting it on the left or the
+ * right would assert a fact the data does not contain. The label stays visible
+ * on those, and is otherwise only exposed to screen readers: sighted users get
+ * direction from the alignment, but alignment is invisible to a screen reader.
+ */
 function MessageRow({
   message,
   personName,
@@ -361,34 +374,55 @@ function MessageRow({
       ? `${personName} sent`
       : DIRECTION_LABEL[message.direction];
 
+  const isSent = message.direction === "sent";
+  const isUnknown = message.direction === "unknown";
+
   return (
     <li
-      className="rounded-[10px] px-4 py-3"
+      className="flex"
       style={{
-        background: message.direction === "sent" ? "var(--info-soft)" : "var(--bg-subtle)",
-        border: "1px solid var(--border-subtle)",
+        justifyContent: isUnknown ? "center" : isSent ? "flex-end" : "flex-start",
       }}
     >
-      <div className="ef-caption mb-1 flex flex-wrap items-baseline justify-between gap-2">
-        <span
-          style={{
-            fontWeight: 600,
-            color: message.direction === "unknown" ? "var(--neutral-400)" : "var(--text-secondary)",
-          }}
+      <div
+        className="px-4 py-3"
+        style={{
+          maxWidth: isUnknown ? "92%" : "78%",
+          background: isSent ? "var(--blue-50)" : isUnknown ? "transparent" : "#fff",
+          border: `1px solid ${isUnknown ? "var(--border-subtle)" : isSent ? "var(--blue-100)" : "var(--border-subtle)"}`,
+          borderStyle: isUnknown ? "dashed" : "solid",
+          // The squared-off corner points at the sender, the way a tail would.
+          borderRadius: isUnknown ? 10 : isSent ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
+        }}
+      >
+        <div
+          className="ef-caption mb-1 flex flex-wrap items-baseline gap-2"
+          style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}
         >
-          {label}
-        </span>
-        <span>{message.sentAt ? message.sentAt.toLocaleString() : "No date in export"}</span>
+          {/* Alignment already conveys direction visually, but alignment is
+              invisible to a screen reader — so the label stays in the
+              accessibility tree via sr-only rather than being dropped. */}
+          <span
+            className={isUnknown ? undefined : "sr-only"}
+            style={{
+              fontWeight: 600,
+              color: isUnknown ? "var(--neutral-400)" : "var(--text-secondary)",
+            }}
+          >
+            {label}
+          </span>
+          <span>{message.sentAt ? message.sentAt.toLocaleString() : "No date in export"}</span>
+        </div>
+        {/* Message bodies are user content: rendered as text, never as markup.
+            `pre-wrap` keeps the sender's own line breaks. */}
+        <p className="ef-small" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          {message.body && message.body.trim().length > 0 ? (
+            message.body
+          ) : (
+            <span style={{ color: "var(--neutral-400)" }}>(no message body in the export)</span>
+          )}
+        </p>
       </div>
-      {/* Message bodies are user content: rendered as text, never as markup.
-          `pre-wrap` keeps the sender's own line breaks. */}
-      <p className="ef-small" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-        {message.body && message.body.trim().length > 0 ? (
-          message.body
-        ) : (
-          <span style={{ color: "var(--neutral-400)" }}>(no message body in the export)</span>
-        )}
-      </p>
     </li>
   );
 }
