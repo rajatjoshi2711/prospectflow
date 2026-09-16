@@ -15,11 +15,17 @@ import { prisma } from "@/lib/prisma";
  *   `ConnectionMark.identityKey` is deliberately not a foreign key — the person
  *   it names outlives any single `Connection` row — so nothing in the database
  *   stops a hand-crafted request from inserting arbitrary strings. Checking the
- *   key against the caller's OWN connections keeps the table to people they
- *   actually have, and means a junk key gets a 404 rather than a stored row.
- *   The check spans every batch the user owns, not just the current snapshot,
- *   so a mark placed on a person who drops out of a later export is still a
- *   legitimate write.
+ *   key against the caller's OWN connections AND their OWN campaign leads keeps
+ *   the table to people they actually have in front of them, and means a junk
+ *   key gets a 404 rather than a stored row. The connection check spans every
+ *   batch the user owns, not just the current snapshot, so a mark placed on a
+ *   person who drops out of a later export is still a legitimate write; the
+ *   campaign arm is what lets a cold lead who matched nobody in the network be
+ *   marked useful or not, which is the whole point of triaging a lead list.
+ *
+ *   Deliberately NOT widened to the whole org's connections: a mark is a
+ *   private opinion about someone the user themselves has, and the prospect
+ *   page renders the control for the viewer's own key either way.
  *
  * TOGGLE / CLEAR
  *   `value: "UP" | "DOWN"` upserts. `value: null` deletes the row, which is how
@@ -56,12 +62,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "value must be \"UP\", \"DOWN\" or null." }, { status: 400 });
   }
 
-  const owned = await prisma.connection.findFirst({
-    where: { identityKey, importBatch: { userId } },
-    select: { id: true },
-  });
-  if (!owned) {
-    return NextResponse.json({ error: "No such connection in your network." }, { status: 404 });
+  const [connection, lead] = await Promise.all([
+    prisma.connection.findFirst({
+      where: { identityKey, importBatch: { userId } },
+      select: { id: true },
+    }),
+    prisma.campaignLead.findFirst({
+      where: { identityKey, campaign: { userId } },
+      select: { id: true },
+    }),
+  ]);
+  if (!connection && !lead) {
+    return NextResponse.json(
+      { error: "No such person in your network or lead lists." },
+      { status: 404 },
+    );
   }
 
   if (value === null) {

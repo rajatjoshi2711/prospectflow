@@ -35,6 +35,13 @@ import { ProspectResearch } from "@/components/prospect-research";
  * messages box explains there is no conversation because the person is not in
  * the viewer's own export, and the header details are labelled as coming from
  * the colleague's snapshot rather than passed off as the viewer's own.
+ *
+ * A PROSPECT IN NOBODY'S NETWORK also renders, provided they are a lead in one
+ * of the VIEWER'S OWN campaigns — a cold lead off a spreadsheet is exactly the
+ * person worth keeping notes and research against. Those pages are mostly
+ * blank by nature, and every box says why rather than looking broken: the
+ * header details are labelled as coming from the campaign file, and "nobody
+ * here is connected to them" is stated as the finding it is.
  */
 export default async function ProspectDetailPage({
   params,
@@ -174,11 +181,20 @@ function ProspectHeader({ detail }: { detail: ProspectDetail }) {
             No LinkedIn URL in the export
           </span>
         )}
+        {/* Where the name, title and company above actually came from. Never
+            left implicit: a campaign lead's details are whatever a spreadsheet
+            said, which is a weaker claim than a LinkedIn export and must not
+            be dressed up as one. */}
         {detail.snapshotDate ? (
           <span className="ef-caption">
             {detail.detailsFromMemberName
               ? `Details from ${detail.detailsFromMemberName}'s import on ${detail.snapshotDate.toLocaleDateString()}`
               : `Your snapshot of ${detail.snapshotDate.toLocaleDateString()}`}
+          </span>
+        ) : detail.detailsFromCampaignName ? (
+          <span className="ef-caption">
+            Details from your uploaded lead list for {detail.detailsFromCampaignName}, not from
+            LinkedIn
           </span>
         ) : null}
       </div>
@@ -306,8 +322,10 @@ function MessagesBox({ detail }: { detail: ProspectDetail }) {
     return (
       <p className="ef-small" style={{ color: "var(--text-secondary)" }}>
         {detail.name} is not in your own latest import, so you have no
-        conversation with them here. See who in {detail.organizationName} does,
-        below.
+        conversation with them here.{" "}
+        {detail.detailsFromCampaignName
+          ? "They came from a lead list rather than from your network."
+          : `See who in ${detail.organizationName} does, below.`}
       </p>
     );
   }
@@ -454,10 +472,14 @@ function CoverageBox({ detail }: { detail: ProspectDetail }) {
 
   if (others.length === 0) {
     return (
+      // An empty list is a real finding for a cold lead, not a failure: it
+      // means there is no warm path in and the approach has to be cold.
       <p className="ef-small" style={{ color: "var(--text-secondary)" }}>
         {viewer
           ? `You are the only person in ${detail.organizationName} connected to them.`
-          : `Nobody in ${detail.organizationName} has them in their current import.`}
+          : detail.detailsFromCampaignName
+            ? `Nobody in ${detail.organizationName} is connected to them — this is a cold lead. Notes and research below are still shared with your team.`
+            : `Nobody in ${detail.organizationName} has them in their current import.`}
       </p>
     );
   }

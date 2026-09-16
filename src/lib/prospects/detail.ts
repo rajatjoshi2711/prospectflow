@@ -99,6 +99,14 @@ export type ProspectDetail = {
   snapshotDate: Date | null;
   /** Whose snapshot the displayed details came from, when it is not the viewer's. */
   detailsFromMemberName: string | null;
+  /**
+   * The campaign whose lead list the displayed details came from, when nobody
+   * in the org has this person in an import at all. Non-null means every field
+   * in the header came from an uploaded spreadsheet rather than from LinkedIn,
+   * and the page says so — presenting sheet data as export data would be a
+   * quiet lie about where a job title came from.
+   */
+  detailsFromCampaignName: string | null;
   status: CampaignLeadStatus | null;
   strength: RelationshipStrength | null;
   mark: ConnectionMarkValue | null;
@@ -111,12 +119,25 @@ export type ProspectDetail = {
 };
 
 /**
- * Returns null when the person appears nowhere in this organization's completed
- * imports — the page turns that into a 404. Membership is checked against EVERY
- * completed batch the org's members own, not just their current snapshots, for
- * the same reason `/api/connections/marks` does: someone who dropped out of the
- * most recent export is still a person this org legitimately knows, and a link
- * to them should not rot.
+ * Returns null when the person is not visible to this viewer at all — the page
+ * turns that into a 404. Two things make a person visible (see
+ * `identityKeyIsVisible`, which is the same rule the write routes enforce):
+ *
+ *   1. They appear in a completed import owned by ANY member of the org.
+ *      Checked against EVERY completed batch, not just current snapshots, for
+ *      the same reason `/api/connections/marks` does: someone who dropped out
+ *      of the most recent export is still a person this org legitimately knows,
+ *      and a link to them should not rot.
+ *   2. They are a lead in one of the VIEWER'S OWN campaigns. A cold lead who
+ *      matched nobody in anyone's network still deserves a page to hang notes,
+ *      research and a usefulness mark on.
+ *
+ * Rule 2 is deliberately the viewer's campaigns and not the org's. Campaigns
+ * are per-user throughout this codebase (`Campaign.userId`, and see the
+ * campaigns page), unlike ICPs, notes and research, which are org assets. If a
+ * colleague's private lead list could conjure a page, one member's spreadsheet
+ * would become a way for everyone else to address people the org has never met.
+ * Everything ON the page stays org-scoped exactly as before.
  */
 export async function loadProspectDetail({
   identityKey,
@@ -154,7 +175,6 @@ export async function loadProspectDetail({
     select: { id: true, userId: true, completedAt: true, createdAt: true },
     orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
   });
-  if (batches.length === 0) return null;
 
   const latestBatchByUser = new Map<string, (typeof batches)[number]>();
   for (const batch of batches) {
@@ -165,7 +185,10 @@ export async function loadProspectDetail({
   // One query for the whole org's view of this person, across every completed
   // batch. `Connection.identityKey` is indexed and this is one person, so the
   // result is small.
-  const connections = await prisma.connection.findMany({
+  // Skipped entirely when the org has no completed import yet — there is
+  // nothing for the `in` list to match, and a campaign-only person still has a
+  // page below.
+  const connections = batches.length === 0 ? [] : await prisma.connection.findMany({
     where: { identityKey, importBatchId: { in: batches.map((batch) => batch.id) } },
     select: {
       id: true,
@@ -182,7 +205,16 @@ export async function loadProspectDetail({
       relationshipBasis: true,
     },
   });
-  if (connections.length === 0) return null;
+  if (connections.length === 0) {
+    return loadCampaignOnlyDetail({
+      identityKey,
+      viewerId,
+      viewerRole,
+      organizationId,
+      organizationName: organization.name,
+      memberName,
+    });
+  }
 
   const viewerBatch = latestBatchByUser.get(viewerId) ?? null;
   const viewerConnection =
@@ -242,6 +274,7 @@ export async function loadProspectDetail({
     detailsFromMemberName: viewerConnection
       ? null
       : (memberName.get(detailBatch?.userId ?? "") ?? null),
+    detailsFromCampaignName: null,
     status,
     strength,
     mark,
@@ -254,6 +287,90 @@ export async function loadProspectDetail({
       viewerId,
     }),
     organizationName: organization.name,
+    notes,
+    research,
+  };
+}
+
+/**
+ * The page for a person nobody in the org has imported, built from the VIEWER'S
+ * OWN campaign lead row.
+ *
+ * Every field here comes from an uploaded spreadsheet, so the result says so
+ * (`detailsFromCampaignName`) and leaves `snapshotDate` / `connectedOn` null —
+ * there is no import behind these details and dating them would invent one.
+ *
+ * The org-scoped parts of the page (notes, research) are loaded exactly as they
+ * are for a connection: they are keyed by (organizationId, identityKey) and
+ * never needed a `Connection` row to exist. Coverage is empty by construction —
+ * we only get here when no member has them — and that emptiness is itself the
+ * useful answer for a cold lead, which the page words accordingly.
+ *
+ * Returns null when the viewer has no such lead, which is the 404.
+ */
+async function loadCampaignOnlyDetail({
+  identityKey,
+  viewerId,
+  viewerRole,
+  organizationId,
+  organizationName,
+  memberName,
+}: {
+  identityKey: string;
+  viewerId: string;
+  viewerRole: "ADMIN" | "MEMBER";
+  organizationId: string;
+  organizationName: string;
+  memberName: Map<string, string>;
+}): Promise<ProspectDetail | null> {
+  // Scoped through the campaign's owner, never through the org: campaigns are
+  // personal, so a colleague's lead list must not make this page exist.
+  const lead = await prisma.campaignLead.findFirst({
+    where: { identityKey, campaign: { userId: viewerId } },
+    // Newest first: if the same person sits in two of the viewer's lead lists,
+    // the most recently uploaded sheet is the more current description of them.
+    orderBy: { createdAt: "desc" },
+    select: {
+      firstName: true,
+      lastName: true,
+      company: true,
+      position: true,
+      linkedinUrl: true,
+      status: true,
+      statusSetAt: true,
+      campaign: { select: { name: true } },
+    },
+  });
+  if (!lead) return null;
+
+  const [notes, research, mark] = await Promise.all([
+    loadNotes({ organizationId, identityKey, viewerId, viewerRole, memberName }),
+    loadResearch({ organizationId, identityKey, memberName }),
+    loadConnectionMarks(viewerId, [identityKey]).then((map) => map.get(identityKey) ?? null),
+  ]);
+
+  return {
+    identityKey,
+    name: [lead.firstName, lead.lastName].filter(Boolean).join(" ").trim() || "Unnamed lead",
+    position: lead.position,
+    company: lead.company,
+    linkedinUrl: lead.linkedinUrl,
+    connectedOn: null,
+    inViewerSnapshot: false,
+    snapshotDate: null,
+    detailsFromMemberName: null,
+    detailsFromCampaignName: lead.campaign.name,
+    // Only a status the user SET BY HAND is shown. `status` otherwise holds its
+    // creation default (`statusSetAt` is null), which for a lead with no
+    // connection and no messages behind it carries no information — the "Not in
+    // your network" state is the honest reading. Same distinction the schema
+    // comment on `statusSetAt` draws.
+    status: lead.statusSetAt ? lead.status : null,
+    strength: null,
+    mark,
+    messages: { kind: "not-in-your-snapshot" },
+    coverage: [],
+    organizationName,
     notes,
     research,
   };
@@ -518,24 +635,47 @@ async function loadResearch({
 }
 
 /**
- * Does this person appear anywhere in this organization's completed imports?
+ * Is this person someone the signed-in viewer can legitimately address?
  *
- * `ProspectNote.identityKey` is deliberately not a foreign key (the person
- * outlives any `Connection` row), so nothing in the database stops a
- * hand-crafted request from writing a note against an arbitrary string. This is
- * the same check `/api/connections/marks` runs before an insert, widened from
- * one user to the org because notes are an org-scoped asset.
+ * The keys on `ProspectNote`, `ProspectResearch` and `ConnectionMark` are
+ * deliberately not foreign keys (the person outlives any `Connection` row), so
+ * nothing in the database stops a hand-crafted request from writing against an
+ * arbitrary string. This is the gate that does, and it is the SAME rule
+ * `loadProspectDetail` uses to decide whether the page exists at all — if a
+ * viewer can open the page, they can write a note or run research on it, and if
+ * they cannot, every write route says 404 too.
+ *
+ * True when EITHER:
+ *   - any member of the org has them in a completed import, or
+ *   - the viewer has them as a lead in one of their OWN campaigns.
+ *
+ * The second arm is the viewer's campaigns rather than the org's on purpose:
+ * campaigns are per-user, and a colleague's private lead list should not become
+ * a way to address people the org has never met. Note that the ASSET being
+ * written stays org-scoped (a note is shared) or user-scoped (a mark is
+ * private) exactly as before — this only decides who may be written about.
  */
-export async function identityKeyBelongsToOrg(
-  organizationId: string,
-  identityKey: string,
-): Promise<boolean> {
-  const found = await prisma.connection.findFirst({
-    where: {
-      identityKey,
-      importBatch: { status: "COMPLETE", user: { organizationId } },
-    },
-    select: { id: true },
-  });
-  return found !== null;
+export async function identityKeyIsVisible({
+  organizationId,
+  viewerId,
+  identityKey,
+}: {
+  organizationId: string;
+  viewerId: string;
+  identityKey: string;
+}): Promise<boolean> {
+  const [connection, lead] = await Promise.all([
+    prisma.connection.findFirst({
+      where: {
+        identityKey,
+        importBatch: { status: "COMPLETE", user: { organizationId } },
+      },
+      select: { id: true },
+    }),
+    prisma.campaignLead.findFirst({
+      where: { identityKey, campaign: { userId: viewerId } },
+      select: { id: true },
+    }),
+  ]);
+  return connection !== null || lead !== null;
 }

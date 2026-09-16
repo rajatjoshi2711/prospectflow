@@ -58,10 +58,12 @@ export type ProspectRow = {
    * The person's stable cross-import key.
    *
    * Two things depend on it: the `markable` usefulness column, and the link on
-   * the person's name to `/prospects/<key>`. It stays optional because a
-   * campaign lead that matched nobody in the network is a spreadsheet row, not
-   * a person this app knows — such a row has no prospect page and no mark, and
-   * both render as plain text rather than as a link that 404s.
+   * the person's name to `/prospects/<key>`. A campaign lead that matched
+   * nobody in the network has one too — its own key off the spreadsheet — and
+   * gets a page with the fields the sheet carried. It stays optional because a
+   * row can genuinely have no key at all (a lead imported before
+   * `CampaignLead.identityKey` existed), and such a row renders as plain text
+   * rather than as a link that 404s.
    */
   identityKey?: string;
   /** The signed-in user's thumbs up/down on this person. Undefined = view does not show marks. */
@@ -292,10 +294,9 @@ export function ProspectTable({
                         {/* The name now opens the prospect page rather than
                             LinkedIn — everything this app knows about the
                             person lives there, and LinkedIn is one button on
-                            it. A row with no `identityKey` (an unlinked
-                            campaign lead: a spreadsheet row that matched
-                            nobody in the network) has no page to open, so it
-                            renders as plain text rather than a broken link. The
+                            it. A row with no `identityKey` at all has no page
+                            to open, so it renders as plain text rather than a
+                            broken link. The
                             profile link stays as its own affordance below, so
                             nothing that used to be one click away became two
                             for the people who only wanted LinkedIn. */}

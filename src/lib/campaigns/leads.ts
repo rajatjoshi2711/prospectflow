@@ -18,9 +18,12 @@ import { PROSPECT_PAGE_SIZE } from "@/lib/insights/prospects";
 export type CampaignLeadRow = {
   id: string;
   /**
-   * The linked `Connection.identityKey`, absent when the lead matched nobody in
-   * the user's network. Carried so the campaign table can link the lead's name
-   * to their prospect page; an unlinked lead has no page and renders plain.
+   * The person's stable key: the linked `Connection.identityKey` when the lead
+   * matched someone in the user's network, otherwise the lead's own
+   * `CampaignLead.identityKey`. Carried so the campaign table can link the
+   * name to their prospect page — an unmatched lead has one too, built from
+   * whatever the spreadsheet carried. Still optional: leads created before the
+   * column existed can have neither, and those render as plain text.
    */
   identityKey?: string;
   firstName: string | null;
@@ -160,6 +163,7 @@ export async function fetchCampaignLeadPage({
       company: true,
       position: true,
       linkedinUrl: true,
+      identityKey: true,
       status: true,
       rawRow: true,
       connectionId: true,
@@ -232,16 +236,16 @@ export async function fetchCampaignLeadPage({
 
     return {
       id: lead.id,
-      // Only leads that resolved to a connection get one, which is what makes
-      // the name a link to the prospect page. An unlinked lead is a
-      // spreadsheet row that matched nobody in the user's network: there is no
-      // person page to open, so `ProspectTable` renders its name as plain
-      // text. Deliberately the connection's key rather than
-      // `CampaignLead.identityKey` — the latter is derived from whatever URL
-      // the sheet happened to carry and can differ from the one ingestion
-      // wrote, and it is the connection's key that every other surface (marks,
-      // notes, org coverage) is stored against.
-      identityKey: connection?.identityKey,
+      // The connection's key FIRST where there is one: that is the key every
+      // other surface (marks, notes, org coverage) is stored against, and it
+      // can differ from the lead's own, which is derived from whatever URL the
+      // sheet happened to carry. An unmatched lead falls back to its own key,
+      // which is what addresses its prospect page — that page renders from the
+      // spreadsheet row and is where notes and research on a cold lead live.
+      // `?? undefined` because `CampaignLead.identityKey` is nullable for rows
+      // written before the column existed, and `ProspectTable` renders a row
+      // with no key as plain text rather than a link that 404s.
+      identityKey: connection?.identityKey ?? lead.identityKey ?? undefined,
       firstName: lead.firstName,
       lastName: lead.lastName,
       company: lead.company,

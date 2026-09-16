@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { identityKeyBelongsToOrg } from "@/lib/prospects/detail";
+import { identityKeyIsVisible } from "@/lib/prospects/detail";
 
 /**
  * Add a note about one person, visible to the author's whole organization.
@@ -14,11 +14,12 @@ import { identityKeyBelongsToOrg } from "@/lib/prospects/detail";
  * WHY THE identityKey IS VERIFIED BEFORE WRITING
  *   `ProspectNote.identityKey` is not a foreign key — the person it names
  *   outlives any single `Connection` row — so the database alone would accept
- *   arbitrary strings. Checking the key against the ORG's own completed imports
- *   keeps the table to people this org actually knows, and turns a junk key
- *   into a 404 rather than a stored row. Same reasoning as
- *   `/api/connections/marks`, widened from one user to the org because a note
- *   is a shared asset rather than a private opinion.
+ *   arbitrary strings. `identityKeyIsVisible` keeps the table to people the
+ *   author can legitimately see — anyone in the ORG's completed imports, or a
+ *   lead in one of their OWN campaigns — and turns a junk key into a 404 rather
+ *   than a stored row. It is exactly the rule that decides whether the prospect
+ *   page renders, so a note is possible for every person a note can be read on.
+ *   The note itself stays org-visible.
  */
 
 export const runtime = "nodejs";
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (!(await identityKeyBelongsToOrg(organizationId, identityKey))) {
+  if (!(await identityKeyIsVisible({ organizationId, viewerId: userId, identityKey }))) {
     return NextResponse.json(
       { error: "No such person in your organization's network." },
       { status: 404 },

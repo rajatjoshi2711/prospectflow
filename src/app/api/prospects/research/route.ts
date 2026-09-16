@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth/guards";
 import { consumeAiQuota, rateLimitResponse } from "@/lib/ai/rate-limit";
 import { prisma } from "@/lib/prisma";
-import { identityKeyBelongsToOrg } from "@/lib/prospects/detail";
+import { identityKeyIsVisible } from "@/lib/prospects/detail";
 import { ResearchUnavailableError, runProspectResearch } from "@/lib/prospects/research";
 
 /**
@@ -11,8 +11,10 @@ import { ResearchUnavailableError, runProspectResearch } from "@/lib/prospects/r
  * SCOPING
  *   `organizationId` and `requestedById` come from the session and are never
  *   read from the body. `identityKey` is a GLOBAL person key and is not a
- *   foreign key, so it is checked against the org's own completed imports
- *   first — a hand-crafted key is a 404, not a paid-for search.
+ *   foreign key, so it is checked with `identityKeyIsVisible` first — a
+ *   hand-crafted key is a 404, not a paid-for search. That check also admits a
+ *   lead from one of the caller's OWN campaigns, so a cold prospect who is in
+ *   nobody's network can still be researched.
  *
  * COST
  *   This is the single most expensive request in the app: a web search plus a
@@ -42,7 +44,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "identityKey is required." }, { status: 400 });
   }
 
-  if (!(await identityKeyBelongsToOrg(organizationId, identityKey))) {
+  if (!(await identityKeyIsVisible({ organizationId, viewerId: userId, identityKey }))) {
     return NextResponse.json(
       { error: "No such person in your organization's network." },
       { status: 404 },
@@ -52,10 +54,10 @@ export async function POST(request: Request) {
   const quota = await consumeAiQuota({ userId, organizationId, action: "prospect-research" });
   if (!quota.ok) return rateLimitResponse(quota);
 
-  // The subject comes from the org's own imports, not from the request body,
+  // The subject comes from the server's own records, not from the request body,
   // for the same reason the tenancy fields do: the caller picks WHO, the server
   // decides what is known about them.
-  const subject = await loadSubject(organizationId, identityKey);
+  const subject = await loadSubject(organizationId, userId, identityKey);
   if (!subject) {
     return NextResponse.json(
       { error: "No such person in your organization's network." },
@@ -101,8 +103,15 @@ export async function POST(request: Request) {
   }
 }
 
-/** The most recent snapshot in the org that names this person. */
-async function loadSubject(organizationId: string, identityKey: string) {
+/**
+ * What we know about the person, for the search prompt.
+ *
+ * Prefers the most recent snapshot in the org that names them, and falls back
+ * to the caller's own campaign lead — the same order of preference the prospect
+ * page uses, and the only source available for a lead who is in nobody's
+ * network.
+ */
+async function loadSubject(organizationId: string, viewerId: string, identityKey: string) {
   const connection = await prisma.connection.findFirst({
     where: { identityKey, importBatch: { status: "COMPLETE", user: { organizationId } } },
     orderBy: [{ importBatch: { completedAt: "desc" } }, { createdAt: "desc" }],
@@ -114,17 +123,30 @@ async function loadSubject(organizationId: string, identityKey: string) {
       linkedinUrl: true,
     },
   });
-  if (!connection) return null;
+  const source =
+    connection ??
+    (await prisma.campaignLead.findFirst({
+      where: { identityKey, campaign: { userId: viewerId } },
+      orderBy: { createdAt: "desc" },
+      select: {
+        firstName: true,
+        lastName: true,
+        position: true,
+        company: true,
+        linkedinUrl: true,
+      },
+    }));
+  if (!source) return null;
 
-  const name = [connection.firstName, connection.lastName].filter(Boolean).join(" ").trim();
+  const name = [source.firstName, source.lastName].filter(Boolean).join(" ").trim();
   // Without a name there is nothing to search for, and a search on a title
   // alone would return someone else's news attributed to this person.
   if (!name) return null;
 
   return {
     name,
-    position: connection.position,
-    company: connection.company,
-    linkedinUrl: connection.linkedinUrl,
+    position: source.position,
+    company: source.company,
+    linkedinUrl: source.linkedinUrl,
   };
 }
