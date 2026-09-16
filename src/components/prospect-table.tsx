@@ -246,7 +246,7 @@ export function ProspectTable({
                   </th>
                   {markable ? (
                     <th className="ef-small px-5 py-3" style={{ fontWeight: 700 }}>
-                      Your take
+                      Usefulness
                     </th>
                   ) : null}
                   {extraColumn ? (

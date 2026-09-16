@@ -147,6 +147,10 @@ export async function MatchDashboard({
         pageSize={MATCH_PAGE_SIZE}
         sort={params.sort}
         strengthSortable
+        // `fetchMatchPage` loads each row's identityKey and the member's own
+        // mark, so both ICP and channel-partner dashboards can render the
+        // usefulness control honestly.
+        markable
         direction={params.direction}
         query={params.query}
         extraColumn={{ header: copy.noun, sortKey: "score" }}
