@@ -44,6 +44,29 @@ export default async function CampaignDetailPage({
 
   const header = (
     <>
+      {/* Part of the shared header, so every stage of this page (ingesting,
+          awaiting confirmation, failed, ready) gets the same way back. */}
+      <Link
+        href="/campaigns"
+        className="ef-small mb-3 inline-flex items-center gap-1"
+        style={{ color: "var(--text-secondary)" }}
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+        All campaigns
+      </Link>
       <p className="ef-eyebrow mb-2">Campaign</p>
       <h1 className="ef-page mb-2">{campaign.name}</h1>
       <p className="ef-caption mb-8">
