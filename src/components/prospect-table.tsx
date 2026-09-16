@@ -23,8 +23,13 @@ import { LEAD_STATUS_BADGE_CLASS, LEAD_STATUS_LABEL } from "@/lib/insights/statu
  * `score` is used by the Phase 4 match dashboards, which sort by match score
  * in the extra column. It is not offered as a header on views that have no
  * score — `extraColumn.sortKey` opts a view in.
+ *
+ * `strength` orders by the materialized `Connection.relationshipScore` column
+ * rather than the value each row derives at render time, which is why the
+ * column had to exist at all: paging is server-side, so only something SQL can
+ * see is sortable. Opt a view in with `strengthSortable`.
  */
-export type ProspectSortKey = "name" | "company" | "connectedOn" | "score";
+export type ProspectSortKey = "name" | "company" | "connectedOn" | "score" | "strength";
 
 export type ProspectRow = {
   id: string;
@@ -67,6 +72,13 @@ export type ProspectTableProps = {
   extraColumn?: { header: string; sortKey?: ProspectSortKey };
   /** Rendered instead of the table when `total` is 0. */
   emptyState?: ReactNode;
+  /**
+   * Makes the relationship-strength header sortable. Off by default: a view
+   * whose query cannot reach `Connection.relationshipScore` would offer a
+   * header that silently does nothing, the same reason `connectedOn` is not
+   * shown everywhere.
+   */
+  strengthSortable?: boolean;
   /** Hide the search box for views that filter some other way. */
   showSearch?: boolean;
   searchPlaceholder?: string;
@@ -103,6 +115,7 @@ export function ProspectTable({
   query,
   extraColumn,
   emptyState,
+  strengthSortable = false,
   showSearch = true,
   searchPlaceholder = "Search by name or company…",
   renderStatus,
@@ -124,7 +137,7 @@ export function ProspectTable({
   function toggleSort(key: ProspectSortKey) {
     // Scores read best high-first, names low-first, so each column starts in
     // the direction people actually want.
-    const preferred = key === "score" ? "desc" : "asc";
+    const preferred = key === "score" || key === "strength" ? "desc" : "asc";
     const opposite = preferred === "asc" ? "desc" : "asc";
     const nextDirection = sort === key && direction === preferred ? opposite : preferred;
     pushParams({ sort: key, dir: nextDirection, page: "1" });
@@ -202,7 +215,16 @@ export function ProspectTable({
                     Status
                   </th>
                   <th className="ef-small px-5 py-3" style={{ fontWeight: 700 }}>
-                    Relationship strength
+                    {strengthSortable ? (
+                      <SortButton
+                        label="Relationship strength"
+                        active={sort === "strength"}
+                        direction={direction}
+                        onClick={() => toggleSort("strength")}
+                      />
+                    ) : (
+                      "Relationship strength"
+                    )}
                   </th>
                   {extraColumn ? (
                     <th className="ef-small px-5 py-3" style={{ fontWeight: 700 }}>

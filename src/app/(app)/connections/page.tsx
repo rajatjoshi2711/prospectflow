@@ -81,6 +81,7 @@ export default async function ConnectionsDashboardPage({
         pageSize={PROSPECT_PAGE_SIZE}
         sort={params.sort}
         direction={params.direction}
+        strengthSortable
         query={params.query}
         emptyState={
           params.query ? (

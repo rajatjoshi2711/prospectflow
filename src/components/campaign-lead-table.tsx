@@ -217,6 +217,7 @@ export function CampaignLeadTable({
       page={page}
       pageSize={pageSize}
       sort={sort}
+      strengthSortable
       direction={direction}
       query={query}
       searchPlaceholder="Search leads by name or company…"

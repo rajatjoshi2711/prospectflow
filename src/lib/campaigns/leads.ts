@@ -2,7 +2,10 @@ import "server-only";
 
 import type { CampaignLeadStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { deriveRelationshipStrength } from "@/lib/insights/relationship";
+import {
+  deriveRelationshipStrength,
+  resolveRelationshipStrength,
+} from "@/lib/insights/relationship";
 import { loadInteractionSignals } from "@/lib/insights/load-signals";
 import { loadStoredRelationshipScores } from "@/lib/insights/load-stored-scores";
 import { toPersonRef } from "@/lib/insights/signals";
@@ -75,9 +78,19 @@ function buildOrderBy(
   switch (sort) {
     case "company":
       return [{ company: direction }, { lastName: "asc" }];
+    case "strength":
+      // Strength lives on the linked `Connection`, so this orders through the
+      // to-one relation. A lead that matched nobody in the network has no
+      // connection and therefore a null score: NULLs last in both directions
+      // keeps those cold leads out of the way rather than at the top of the
+      // ascending list.
+      return [
+        { connection: { relationshipScore: { sort: direction, nulls: "last" } } },
+        { lastName: "asc" },
+      ];
     // Leads have no `connectedOn` of their own and no match score, so those
-    // sort keys fall through to name — the table only offers name/company on
-    // this view anyway.
+    // sort keys fall through to name — the table only offers name/company and
+    // strength on this view anyway.
     default:
       return [{ firstName: direction }, { lastName: direction }];
   }
@@ -152,6 +165,8 @@ export async function fetchCampaignLeadPage({
           lastName: true,
           connectedOn: true,
           importBatchId: true,
+          relationshipScore: true,
+          relationshipBasis: true,
         },
       },
     },
@@ -188,15 +203,22 @@ export async function fetchCampaignLeadPage({
 
   const rows: CampaignLeadRow[] = leads.map((lead) => {
     const connection = lead.connection;
+    // Materialized column first, so the rows agree with the strength sort.
     const strength =
       connection && signals
-        ? deriveRelationshipStrength({
-            signals,
-            identityKey: connection.identityKey,
-            connectedOn: connection.connectedOn,
-            stored: (lead.connectionId
-              ? storedScores.get(lead.connectionId)
-              : null) ?? null,
+        ? resolveRelationshipStrength({
+            materialized: {
+              score: connection.relationshipScore,
+              basis: connection.relationshipBasis,
+            },
+            derived: deriveRelationshipStrength({
+              signals,
+              identityKey: connection.identityKey,
+              connectedOn: connection.connectedOn,
+              stored: (lead.connectionId
+                ? storedScores.get(lead.connectionId)
+                : null) ?? null,
+            }),
           })
         : null;
 

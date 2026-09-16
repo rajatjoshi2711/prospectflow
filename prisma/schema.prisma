@@ -128,6 +128,25 @@ model Connection {
   country       String?
   createdAt     DateTime    @default(now())
 
+  /// The EFFECTIVE relationship strength shown for this connection, 0-100,
+  /// materialized by the scoring run (`src/lib/relationship/run.ts`).
+  ///
+  /// It exists because sorting and paging are server-side. The displayed value
+  /// resolves to a stored `RelationshipStrengthScore` for a capped subset and
+  /// to a read-time heuristic for everyone else, so ordering by the score table
+  /// alone would produce an order that contradicts the numbers on screen —
+  /// and Prisma cannot order by a to-many relation anyway. Same lesson as
+  /// `CampaignLead.status`: a value the column does not know about cannot be
+  /// counted, filtered or sorted.
+  ///
+  /// NULL means "not yet scored" — no interaction data at all, or no scoring
+  /// run since this batch was imported. It must never be written as 0: zero
+  /// reads as "a weak relationship" when the truth is "no data".
+  relationshipScore Int?
+  /// `ai` when the materialized score came from the model pass, `heuristic`
+  /// when it came from the deterministic rules. Null alongside a null score.
+  relationshipBasis String?
+
   prospectMatches            ProspectMatch[]
   campaignLeads              CampaignLead[]
   relationshipStrengthScores RelationshipStrengthScore[]
@@ -137,6 +156,9 @@ model Connection {
   @@index([identityKey])
   @@index([nameKey])
   @@index([importBatchId, identityKey])
+  /// Backs the "sort by relationship strength" order on every prospect table:
+  /// the batch filter and the sort key in one index.
+  @@index([importBatchId, relationshipScore])
 }
 
 /// The ACCOUNT OWNER's own work history, from `Positions.csv`.

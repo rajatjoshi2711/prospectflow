@@ -137,6 +137,41 @@ export function deriveRelationshipStrength({
   };
 }
 
+/**
+ * Reconciles the materialized `Connection.relationshipScore` column with the
+ * read-time derivation above.
+ *
+ * The column is what SQL sorts and pages by, so whenever it holds a value the
+ * table must display THAT number — otherwise the order on screen contradicts
+ * the numbers on screen, which is the exact failure this column was added to
+ * fix. The derivation is still run, for two reasons: it supplies the hover
+ * factors (the column stores a bare number), and it is the fallback for rows no
+ * scoring run has reached yet, so a freshly imported batch reads exactly as it
+ * did before this column existed.
+ *
+ * A null column is "unknown", never "zero" — see the header comment.
+ */
+export function resolveRelationshipStrength({
+  materialized,
+  derived,
+}: {
+  materialized: { score: number | null; basis: string | null };
+  derived: RelationshipStrength | null;
+}): RelationshipStrength | null {
+  if (materialized.score === null) return derived;
+  return {
+    score: Math.max(0, Math.min(100, Math.round(materialized.score))),
+    // The column's own basis wins: it records how the stored number was
+    // produced, and the derivation may have fallen back to the heuristic for a
+    // connection whose materialized value came from the model.
+    basis: materialized.basis === "ai" ? "ai" : "heuristic",
+    factors:
+      derived && derived.factors.length > 0
+        ? derived.factors
+        : ["Scored from interaction history"],
+  };
+}
+
 function daysBetween(from: Date, to: Date): number {
   return Math.abs(to.getTime() - from.getTime()) / 86_400_000;
 }

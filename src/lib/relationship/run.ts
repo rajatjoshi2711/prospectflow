@@ -1,7 +1,10 @@
 import "server-only";
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { tryGetLLMProvider } from "@/lib/ai";
+import { deriveRelationshipStrength } from "@/lib/insights/relationship";
+import { blankSignal, type InteractionSignalMap } from "@/lib/insights/signals";
 import { getLatestCompleteBatch } from "@/lib/insights/prospects";
 import { computeNameKeyFromParts } from "@/lib/ingestion/identity-key";
 import {
@@ -36,6 +39,9 @@ import {
  *      detector.
  *   6. Score in batches (LLM, or deterministic when no provider), upsert, and
  *      prune rows for connections that are no longer scorable.
+ *   7. Materialize the EFFECTIVE strength onto every connection in the batch
+ *      (`Connection.relationshipScore` / `relationshipBasis`) so the dashboards
+ *      can order by it in SQL. See `materializeEffectiveScores`.
  *
  * COST
  *   The number of model calls is bounded by the cap, not by network size:
@@ -224,6 +230,7 @@ async function runScoring(userId: string): Promise<RelationshipRunSummary> {
   }
 
   const now = new Date();
+  const hasAnyInteractionData = messages.length > 0 || invitations.length > 0;
   const featuresById = new Map<string, RelationshipFeatures>();
   for (const connection of connections) {
     const aggregate = aggregates.get(connection.id);
@@ -257,8 +264,18 @@ async function runScoring(userId: string): Promise<RelationshipRunSummary> {
 
   if (scorableIds.length === 0) {
     // Nothing to score. Still prune, so scores from a previous snapshot do not
-    // linger against connections that now have no evidence behind them.
+    // linger against connections that now have no evidence behind them, and
+    // still materialize — an unscorable batch is a real answer ("not yet
+    // scored" everywhere), not a reason to leave the sort column stale.
     summary.pruned = await pruneScores(userId, []);
+    await materializeEffectiveScores({
+      batchId: batch.id,
+      connections,
+      aggregates,
+      hasAnyInteractionData,
+      aiScores: new Map(),
+      now,
+    });
     return summary;
   }
 
@@ -325,7 +342,131 @@ async function runScoring(userId: string): Promise<RelationshipRunSummary> {
   summary.scored = scored.length;
   summary.pruned = await pruneScores(userId, scored.map((result) => result.connectionId));
 
+  await materializeEffectiveScores({
+    batchId: batch.id,
+    connections,
+    aggregates,
+    hasAnyInteractionData,
+    aiScores: new Map(
+      scored.map((result) => [result.connectionId, { score: result.score, basis: result.basis }]),
+    ),
+    now,
+  });
+
   return summary;
+}
+
+/** How many connections get their score written per round trip. */
+const MATERIALIZE_CHUNK = 500;
+
+/**
+ * Writes the EFFECTIVE relationship strength onto every connection in the
+ * batch, so `ORDER BY` can see the same number the table renders.
+ *
+ * WHY EVERY CONNECTION AND NOT JUST THE SCORED ONES
+ * -------------------------------------------------
+ * Only a capped subset (`MAX_SCORED_PER_USER`) ever gets a
+ * `RelationshipStrengthScore` row; everyone else displays the deterministic
+ * read-time heuristic. Ordering by the score table alone would therefore sort
+ * a few hundred people and strand the rest, producing an order that
+ * contradicts the numbers on screen. So the resolution order the UI uses —
+ * model score, else heuristic, else unknown — is applied here once, for the
+ * whole batch, and the answer is stored.
+ *
+ * NULL IS NOT ZERO
+ * ----------------
+ * `deriveRelationshipStrength` returns null exactly when the import carried no
+ * messages and no invitations at all, and that null is written through as
+ * null. A 0 would claim "weak relationship" where the truth is "no data", and
+ * would sort those people above nobody rather than last.
+ *
+ * COST
+ * ----
+ * No new queries: the heuristic is computed from the per-connection aggregates
+ * the run has already folded in memory, so this adds CPU proportional to the
+ * batch and `ceil(connections / 500)` UPDATE statements — roughly 60 round
+ * trips for a 30,000-connection export. Every row is rewritten rather than
+ * diffed, because the heuristic's recency terms decay with wall-clock time, so
+ * "unchanged since last run" is not a property this can rely on.
+ */
+async function materializeEffectiveScores({
+  batchId,
+  connections,
+  aggregates,
+  hasAnyInteractionData,
+  aiScores,
+  now,
+}: {
+  batchId: string;
+  connections: {
+    id: string;
+    identityKey: string;
+    connectedOn: Date | null;
+  }[];
+  aggregates: Map<string, Aggregate>;
+  hasAnyInteractionData: boolean;
+  aiScores: Map<string, { score: number; basis: "ai" | "heuristic" }>;
+  now: Date;
+}): Promise<void> {
+  if (connections.length === 0) return;
+
+  // The read-time heuristic takes an `InteractionSignalMap` keyed by the
+  // connection's identityKey. The aggregates already hold the same facts for
+  // the whole batch, so rebuild that shape here rather than re-querying: this
+  // is the only way the stored number is guaranteed to equal what a page would
+  // have rendered from `loadInteractionSignals`.
+  const signals: InteractionSignalMap = { byKey: new Map(), hasAnyInteractionData };
+  for (const connection of connections) {
+    const aggregate = aggregates.get(connection.id);
+    if (!aggregate) continue;
+    const signal = blankSignal();
+    for (const message of aggregate.messages) {
+      if (message.senderIsUser === true) signal.outboundMessages += 1;
+      else if (message.senderIsUser === false) signal.inboundMessages += 1;
+      else signal.undirectedMessages += 1;
+      if (message.sentAt && (!signal.lastMessageAt || message.sentAt > signal.lastMessageAt)) {
+        signal.lastMessageAt = message.sentAt;
+      }
+    }
+    signal.hasInvitation = aggregate.hasInvitation;
+    signal.hasInvitationNote = aggregate.hasInvitationNote;
+    signals.byKey.set(connection.identityKey, signal);
+  }
+
+  const values = connections.map((connection) => {
+    const ai = aiScores.get(connection.id);
+    if (ai) return { id: connection.id, score: ai.score, basis: ai.basis };
+    const heuristic = deriveRelationshipStrength({
+      signals,
+      identityKey: connection.identityKey,
+      connectedOn: connection.connectedOn,
+      stored: null,
+      now,
+    });
+    return heuristic
+      ? { id: connection.id, score: heuristic.score, basis: heuristic.basis }
+      : { id: connection.id, score: null, basis: null };
+  });
+
+  for (let index = 0; index < values.length; index += MATERIALIZE_CHUNK) {
+    const chunk = values.slice(index, index + MATERIALIZE_CHUNK);
+    // A single UPDATE ... FROM (VALUES ...) per chunk. Fully parameterized —
+    // every id, score and basis is a bind variable, never interpolated text —
+    // with explicit casts because Postgres cannot infer a VALUES column's type
+    // from parameters alone. The `importBatchId` guard keeps the write inside
+    // the batch this run resolved, so a stale id can never reach another
+    // user's rows.
+    const rows = chunk.map(
+      (value) =>
+        Prisma.sql`(${value.id}::text, ${value.score}::int, ${value.basis}::text)`,
+    );
+    await prisma.$executeRaw`
+      UPDATE "Connection" AS c
+      SET "relationshipScore" = v.score, "relationshipBasis" = v.basis
+      FROM (VALUES ${Prisma.join(rows)}) AS v(id, score, basis)
+      WHERE c.id = v.id AND c."importBatchId" = ${batchId}
+    `;
+  }
 }
 
 /**

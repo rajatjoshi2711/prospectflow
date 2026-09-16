@@ -2,7 +2,10 @@ import "server-only";
 
 import type { MatchType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { deriveRelationshipStrength } from "@/lib/insights/relationship";
+import {
+  deriveRelationshipStrength,
+  resolveRelationshipStrength,
+} from "@/lib/insights/relationship";
 import { loadInteractionSignals } from "@/lib/insights/load-signals";
 import { loadStoredRelationshipScores } from "@/lib/insights/load-stored-scores";
 import { toPersonRef } from "@/lib/insights/signals";
@@ -23,7 +26,7 @@ import type { ProspectRow } from "@/components/prospect-table";
 
 export const MATCH_PAGE_SIZE = 25;
 
-export type MatchSortKey = "score" | "name" | "company";
+export type MatchSortKey = "score" | "name" | "company" | "strength";
 
 export function parseMatchSearchParams(
   params: Record<string, string | string[] | undefined>,
@@ -37,7 +40,9 @@ export function parseMatchSearchParams(
   const rawSort = read("sort");
 
   const sort: MatchSortKey =
-    rawSort === "name" || rawSort === "company" ? rawSort : "score";
+    rawSort === "name" || rawSort === "company" || rawSort === "strength"
+      ? rawSort
+      : "score";
 
   return {
     page: Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1,
@@ -109,6 +114,15 @@ function buildOrderBy(
       return [{ connection: { firstName: direction } }, { score: "desc" }];
     case "company":
       return [{ connection: { company: direction } }, { score: "desc" }];
+    case "strength":
+      // Through the to-one `connection` relation, which Prisma can order by
+      // (unlike `Connection.strengthScores`, a to-many). NULLs last in both
+      // directions — unscored is unknown, not weak — with the match score as
+      // the tiebreak, since that is this view's own ranking.
+      return [
+        { connection: { relationshipScore: { sort: direction, nulls: "last" } } },
+        { score: "desc" },
+      ];
     case "score":
     default:
       return [{ score: direction }, { connection: { lastName: "asc" } }];
@@ -176,6 +190,8 @@ export async function fetchMatchPage({
           position: true,
           linkedinUrl: true,
           connectedOn: true,
+          relationshipScore: true,
+          relationshipBasis: true,
         },
       },
     },
@@ -195,11 +211,18 @@ export async function fetchMatchPage({
 
   const rows: MatchRow[] = matches.map((match, index) => {
     const identityKey = refs[index].identityKey;
-    const strength = deriveRelationshipStrength({
-      signals,
-      identityKey,
-      connectedOn: match.connection.connectedOn,
-      stored: storedScores.get(match.connection.id) ?? null,
+    // Materialized column first, so the rows agree with the strength sort.
+    const strength = resolveRelationshipStrength({
+      materialized: {
+        score: match.connection.relationshipScore,
+        basis: match.connection.relationshipBasis,
+      },
+      derived: deriveRelationshipStrength({
+        signals,
+        identityKey,
+        connectedOn: match.connection.connectedOn,
+        stored: storedScores.get(match.connection.id) ?? null,
+      }),
     });
     return {
       id: match.id,

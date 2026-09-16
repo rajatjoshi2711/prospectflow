@@ -146,6 +146,7 @@ export async function MatchDashboard({
         page={page}
         pageSize={MATCH_PAGE_SIZE}
         sort={params.sort}
+        strengthSortable
         direction={params.direction}
         query={params.query}
         extraColumn={{ header: copy.noun, sortKey: "score" }}

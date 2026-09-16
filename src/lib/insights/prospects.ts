@@ -2,7 +2,10 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { deriveRelationshipStrength } from "@/lib/insights/relationship";
+import {
+  deriveRelationshipStrength,
+  resolveRelationshipStrength,
+} from "@/lib/insights/relationship";
 import { loadInteractionSignals } from "@/lib/insights/load-signals";
 import { loadStoredRelationshipScores } from "@/lib/insights/load-stored-scores";
 import { toPersonRef } from "@/lib/insights/signals";
@@ -35,7 +38,12 @@ export function parseProspectSearchParams(params: Record<string, string | string
   const rawDirection = read("dir");
 
   const sort: ProspectSortKey =
-    rawSort === "company" || rawSort === "connectedOn" || rawSort === "name" ? rawSort : "name";
+    rawSort === "company" ||
+    rawSort === "connectedOn" ||
+    rawSort === "strength" ||
+    rawSort === "name"
+      ? rawSort
+      : "name";
 
   return {
     page: Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1,
@@ -72,6 +80,16 @@ function buildOrderBy(
       return [{ company: direction }, { lastName: "asc" }];
     case "connectedOn":
       return [{ connectedOn: direction }, { lastName: "asc" }];
+    case "strength":
+      // NULLs last in BOTH directions: an unscored connection is unknown, not
+      // weak, so it never leads the ascending list. Before the first scoring
+      // run every row is null and this degrades to the name tiebreak, which is
+      // stable rather than arbitrary.
+      return [
+        { relationshipScore: { sort: direction, nulls: "last" } },
+        { lastName: "asc" },
+        { firstName: "asc" },
+      ];
     case "name":
     default:
       return [{ firstName: direction }, { lastName: direction }];
@@ -132,6 +150,8 @@ export async function fetchProspectPage({
       position: true,
       linkedinUrl: true,
       connectedOn: true,
+      relationshipScore: true,
+      relationshipBasis: true,
     },
   });
 
@@ -146,11 +166,20 @@ export async function fetchProspectPage({
 
   const rows: ProspectRow[] = connections.map((connection, index) => {
     const identityKey = refs[index].identityKey;
-    const strength = deriveRelationshipStrength({
-      signals,
-      identityKey,
-      connectedOn: connection.connectedOn,
-      stored: storedScores.get(connection.id) ?? null,
+    // The materialized column is what the ORDER BY above read, so it is also
+    // what must be displayed; the derivation still supplies the hover factors
+    // and covers rows no scoring run has reached.
+    const strength = resolveRelationshipStrength({
+      materialized: {
+        score: connection.relationshipScore,
+        basis: connection.relationshipBasis,
+      },
+      derived: deriveRelationshipStrength({
+        signals,
+        identityKey,
+        connectedOn: connection.connectedOn,
+        stored: storedScores.get(connection.id) ?? null,
+      }),
     });
     return {
       id: connection.id,
