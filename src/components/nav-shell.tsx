@@ -76,7 +76,13 @@ export function NavShell({
   }, [navOpen]);
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg-subtle)" }}>
+    // min-h-screen, NOT h-screen + overflow-hidden. The shell used to be a
+    // fixed-height box with `main` as its own scroll container, which meant
+    // `main` was always exactly one viewport tall — leaving dead space under
+    // short pages — and any overflow on `body` produced a second scrollbar
+    // next to `main`'s. Letting the page scroll normally and sticking the
+    // sidebar to it keeps the sidebar pinned with exactly one scrollbar.
+    <div className="flex min-h-screen" style={{ background: "var(--bg-subtle)" }}>
       {/* Scrim. Present only while the drawer is open, and only below `md`. */}
       {navOpen ? (
         <button
@@ -90,7 +96,10 @@ export function NavShell({
 
       <aside
         id="app-nav"
-        className={`fixed inset-y-0 left-0 z-40 flex h-screen w-64 shrink-0 flex-col border-r transition-transform md:static md:translate-x-0 ${
+        // Below md it is an off-canvas drawer (fixed). At md and up it is
+        // sticky rather than static, so it stays put as the page scrolls
+        // without the shell having to own the scrolling itself.
+        className={`fixed inset-y-0 left-0 z-40 flex h-screen w-64 shrink-0 flex-col border-r transition-transform md:sticky md:top-0 md:translate-x-0 md:self-start ${
           navOpen ? "translate-x-0" : "-translate-x-full"
         }`}
         style={{
@@ -203,8 +212,7 @@ export function NavShell({
         </div>
       </aside>
 
-      {/* min-w-0 keeps wide tables from stretching the flex row; the sidebar is
-          pinned by the parent's h-screen/overflow-hidden and only this scrolls. */}
+      {/* min-w-0 keeps wide tables from stretching the flex row. */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header
           className="flex shrink-0 items-center gap-3 border-b px-4 py-3 md:hidden"
@@ -226,7 +234,9 @@ export function NavShell({
           </span>
         </header>
 
-        <main className="min-w-0 flex-1 overflow-y-auto">
+        {/* No overflow-y-auto: the page scrolls, not this element, so main is
+            only as tall as its content. */}
+        <main className="min-w-0 flex-1">
           <div className="ef-container-product py-6 md:py-10">{children}</div>
         </main>
       </div>
