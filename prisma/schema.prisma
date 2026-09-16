@@ -32,6 +32,7 @@ model Organization {
   icps             ICP[]
   channelPartners  ChannelPartner[]
   quickSuggestions QuickSuggestion[]
+  prospectNotes    ProspectNote[]
 }
 
 model User {
@@ -63,6 +64,7 @@ model User {
   relationshipStrengthScores RelationshipStrengthScore[]
   quickSuggestions           QuickSuggestion[]
   connectionMarks            ConnectionMark[]
+  prospectNotes              ProspectNote[]
 
   @@index([organizationId])
 }
@@ -555,6 +557,46 @@ model ConnectionMark {
   /// `userId` plus `identityKey IN (...)`.
   @@index([userId])
 }
+
+/// A note one org member wrote about one PERSON, visible to the whole
+/// organization.
+///
+/// ORG-VISIBLE AND ATTRIBUTED, DELIBERATELY
+/// ----------------------------------------
+/// This is the opposite decision from `ConnectionMark` and
+/// `RelationshipStrengthScore`, which are private to one member. A thumbs-up is
+/// one person's read of a prospect; a note is the shared context the product
+/// exists to pool ("spoke to them at the Bangalore event, they own the budget").
+/// It sits beside the org-coverage box on the prospect page for exactly that
+/// reason, so it carries `organizationId` rather than `userId` as its scope,
+/// and `authorId` so a reader always knows whose observation they are reading.
+///
+/// AUTHORIZATION: any member of the owning org may create a note. Deletion is
+/// restricted server-side to the note's own author, plus org ADMINs, who need a
+/// way to remove something inappropriate from a shared surface. Enforced in
+/// `src/app/api/prospects/notes/[id]/route.ts` by putting both scopes in the
+/// WHERE clause of a `deleteMany`, so a hand-crafted request deletes zero rows.
+///
+/// KEYED ON `identityKey`, like `ConnectionMark`: notes about a person must
+/// survive the next import, which replaces every `Connection` row. Not an FK
+/// for the same reason — the person outlives any single connection row.
+model ProspectNote {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// The stable person key — see the note above.
+  identityKey    String
+  authorId       String
+  author         User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body           String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  /// The only read path: one person's notes for one org, newest first.
+  @@index([organizationId, identityKey, createdAt])
+  @@index([authorId])
+}
+
 
 /// "Who should reach out to whom, for what" — org-wide, spanning every member's
 /// connection graph rather than one person's import.

@@ -17,6 +17,12 @@ import { PROSPECT_PAGE_SIZE } from "@/lib/insights/prospects";
 /** One campaign lead as the campaign table renders it. */
 export type CampaignLeadRow = {
   id: string;
+  /**
+   * The linked `Connection.identityKey`, absent when the lead matched nobody in
+   * the user's network. Carried so the campaign table can link the lead's name
+   * to their prospect page; an unlinked lead has no page and renders plain.
+   */
+  identityKey?: string;
   firstName: string | null;
   lastName: string | null;
   company: string | null;
@@ -226,6 +232,16 @@ export async function fetchCampaignLeadPage({
 
     return {
       id: lead.id,
+      // Only leads that resolved to a connection get one, which is what makes
+      // the name a link to the prospect page. An unlinked lead is a
+      // spreadsheet row that matched nobody in the user's network: there is no
+      // person page to open, so `ProspectTable` renders its name as plain
+      // text. Deliberately the connection's key rather than
+      // `CampaignLead.identityKey` — the latter is derived from whatever URL
+      // the sheet happened to carry and can differ from the one ingestion
+      // wrote, and it is the connection's key that every other surface (marks,
+      // notes, org coverage) is stored against.
+      identityKey: connection?.identityKey,
       firstName: lead.firstName,
       lastName: lead.lastName,
       company: lead.company,

@@ -1,10 +1,12 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode } from "react";
 import type { CampaignLeadStatus, ConnectionMarkValue } from "@prisma/client";
 import { LEAD_STATUS_BADGE_CLASS, LEAD_STATUS_LABEL } from "@/lib/insights/status";
 import { ConnectionMarkButtons } from "@/components/connection-mark-buttons";
+import { prospectHref } from "@/lib/prospects/person-key";
 
 /**
  * The shared prospect table.
@@ -53,9 +55,13 @@ export type ProspectRow = {
    */
   relationshipBasis?: "ai" | "heuristic" | null;
   /**
-   * The person's stable cross-import key. Only the views that opt into
-   * `markable` need it, so it is optional: `MatchRow` and the campaign lead
-   * rows build `ProspectRow`s from their own shapes and are unaffected.
+   * The person's stable cross-import key.
+   *
+   * Two things depend on it: the `markable` usefulness column, and the link on
+   * the person's name to `/prospects/<key>`. It stays optional because a
+   * campaign lead that matched nobody in the network is a spreadsheet row, not
+   * a person this app knows — such a row has no prospect page and no mark, and
+   * both render as plain text rather than as a link that 404s.
    */
   identityKey?: string;
   /** The signed-in user's thumbs up/down on this person. Undefined = view does not show marks. */
@@ -141,6 +147,13 @@ export function ProspectTable({
 }: ProspectTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
+
+  // Handed to the prospect page as `?from=`, so its back link returns to THIS
+  // list on THIS page of results rather than to a generic landing page. The
+  // detail page re-validates it — a query parameter is reader-supplied input.
+  const currentQuery = searchParams?.toString() ?? "";
+  const backTo = currentQuery ? `${pathname}?${currentQuery}` : (pathname ?? "/connections");
 
   function pushParams(updates: Record<string, string | null>) {
     const next = new URLSearchParams(searchParams?.toString() ?? "");
@@ -276,30 +289,51 @@ export function ProspectTable({
                   rows.map((row) => (
                     <tr key={row.id} className="border-t" style={{ borderColor: "var(--border-subtle)" }}>
                       <td className="px-5 py-3">
+                        {/* The name now opens the prospect page rather than
+                            LinkedIn — everything this app knows about the
+                            person lives there, and LinkedIn is one button on
+                            it. A row with no `identityKey` (an unlinked
+                            campaign lead: a spreadsheet row that matched
+                            nobody in the network) has no page to open, so it
+                            renders as plain text rather than a broken link. The
+                            profile link stays as its own affordance below, so
+                            nothing that used to be one click away became two
+                            for the people who only wanted LinkedIn. */}
                         <div className="ef-small" style={{ fontWeight: 600 }}>
-                          {row.linkedinUrl ? (
-                            <a
-                              href={row.linkedinUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                          {row.identityKey ? (
+                            <Link
+                              href={prospectHref(row.identityKey, backTo)}
                               style={{ color: "var(--blue-500)" }}
                             >
                               {displayName(row)}
-                              <span aria-hidden style={{ marginLeft: 4 }}>
-                                ↗
-                              </span>
-                              <span className="sr-only"> (opens LinkedIn profile in a new tab)</span>
-                            </a>
+                            </Link>
                           ) : (
                             displayName(row)
                           )}
                         </div>
                         {row.position ? <div className="ef-caption">{row.position}</div> : null}
-                        {!row.linkedinUrl ? (
+                        {row.linkedinUrl ? (
+                          <a
+                            href={row.linkedinUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="ef-caption"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            LinkedIn
+                            <span aria-hidden style={{ marginLeft: 3 }}>
+                              ↗
+                            </span>
+                            <span className="sr-only">
+                              {" "}
+                              profile for {displayName(row)} (opens in a new tab)
+                            </span>
+                          </a>
+                        ) : (
                           <div className="ef-caption" style={{ color: "var(--neutral-400)" }}>
                             No LinkedIn URL in export
                           </div>
-                        ) : null}
+                        )}
                       </td>
                       <td className="ef-small px-5 py-3">{row.company ?? "—"}</td>
                       <td className="px-5 py-3">

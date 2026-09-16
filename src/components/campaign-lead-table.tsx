@@ -99,6 +99,9 @@ export function CampaignLeadTable({
 
   const prospectRows: ProspectRow[] = rows.map((row) => ({
     id: row.id,
+    // Present only for leads that resolved to a connection, which is what makes
+    // the name a link to the prospect page.
+    identityKey: row.identityKey,
     firstName: row.firstName,
     lastName: row.lastName,
     company: row.company,
