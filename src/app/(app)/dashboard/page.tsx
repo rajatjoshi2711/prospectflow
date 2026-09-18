@@ -2,7 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
-import { CountryBarChart, type CountryCount } from "@/components/country-bar-chart";
 import { getLatestCompleteBatch } from "@/lib/insights/prospects";
 import { fetchTopMatchesByCompany, type CompanyGroup } from "@/lib/insights/matches";
 import { getRelationshipScoringState } from "@/lib/relationship/state";
@@ -27,17 +26,8 @@ export default async function DashboardPage() {
     prisma.importBatch.count({ where: { userId: session.userId, status: "COMPLETE" } }),
   ]);
 
-  const [connectionCount, countryGroups, jobChanges] = await Promise.all([
+  const [connectionCount, jobChanges] = await Promise.all([
     batch ? prisma.connection.count({ where: { importBatchId: batch.id } }) : Promise.resolve(0),
-    batch
-      ? prisma.connection.groupBy({
-          by: ["country"],
-          where: { importBatchId: batch.id, country: { not: null } },
-          _count: { country: true },
-          orderBy: { _count: { country: "desc" } },
-          take: 10,
-        })
-      : Promise.resolve([]),
     // JobChangeEvent has no userId column; scope it through the batch it was
     // detected on, which belongs to this user.
     prisma.jobChangeEvent.findMany({
@@ -113,10 +103,6 @@ export default async function DashboardPage() {
     hasCompletedImport: batch !== null,
   });
 
-  const countries: CountryCount[] = countryGroups.flatMap((group) =>
-    group.country ? [{ country: group.country, count: group._count.country }] : [],
-  );
-
   const daysSinceImport = daysSince(user?.lastImportAt ?? null);
   const needsReminder = daysSinceImport === null || daysSinceImport >= REMINDER_AFTER_DAYS;
 
@@ -126,7 +112,7 @@ export default async function DashboardPage() {
       <h1 className="ef-page mb-2">Welcome back, {session.name.split(" ")[0]}</h1>
       <p className="ef-lead mb-8" style={{ maxWidth: 680 }}>
         Your personal view of the network you have imported: who moved jobs,
-        where your connections sit, and when to refresh your data.
+        who is worth a conversation, and when to refresh your data.
       </p>
 
       {needsReminder ? (
@@ -175,22 +161,6 @@ export default async function DashboardPage() {
       </div>
 
       <div className="grid gap-6" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))" }}>
-        <section className="ef-card">
-          <p className="ef-subhead mb-1">Top 10 countries by connections</p>
-          <p className="ef-caption mb-4">
-            Where the people in your network are based.
-          </p>
-          {countries.length > 0 ? (
-            <CountryBarChart data={countries} />
-          ) : (
-            <p className="ef-small" style={{ color: "var(--text-secondary)" }}>
-              {batch
-                ? "LinkedIn's Connections.csv does not include a country column, so no location is available for your connections yet. This chart fills in automatically once country data is enriched onto connections."
-                : "Upload a LinkedIn export to see where your network is based."}
-            </p>
-          )}
-        </section>
-
         <section className="ef-card">
           <div className="mb-1 flex items-center justify-between gap-3">
             <p className="ef-subhead">Job change alerts</p>

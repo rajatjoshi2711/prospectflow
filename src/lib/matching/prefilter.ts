@@ -9,8 +9,8 @@
  * pipeline is two-stage:
  *
  *   Stage 1 (this file, pure CPU, no network): score every connection against
- *   every definition with cheap string rules, hard-exclude on country, and
- *   keep only a bounded shortlist of plausible candidates.
+ *   every definition with cheap string rules and keep only a bounded
+ *   shortlist of plausible candidates.
  *
  *   Stage 2 (score.ts): the LLM sees only that shortlist, batched, and
  *   produces the final 0-100 score plus a one-sentence rationale.
@@ -18,7 +18,7 @@
  * The pre-filter is deliberately GENEROUS — its job is to discard the obvious
  * no's, not to make the final call. Anything it lets through is re-judged by
  * the model; anything it rejects was rejected on an explicit, inspectable rule
- * (wrong country, or no overlap at all with the definition's vocabulary).
+ * (no overlap at all with the definition's vocabulary).
  *
  * The pre-filter score also doubles as the FALLBACK score when no LLM is
  * configured, so the feature degrades to a transparent rules-only mode rather
@@ -31,7 +31,6 @@ export type CandidateConnection = {
   lastName: string | null;
   company: string | null;
   position: string | null;
-  country: string | null;
 };
 
 /** Normalised, provider-agnostic view of an ICP or a channel partner. */
@@ -39,8 +38,6 @@ export type MatchDefinition = {
   id: string;
   kind: "ICP" | "CHANNEL_PARTNER";
   name: string;
-  /** ICP only. Null means "any country". */
-  country: string | null;
   industry: string | null;
   /** ICP only. Empty for channel partners. */
   positions: string[];
@@ -90,7 +87,6 @@ const WEIGHT_POSITION_TERM = 18;
 const WEIGHT_INDUSTRY_PHRASE = 30;
 const WEIGHT_INDUSTRY_TERM = 12;
 const WEIGHT_DESCRIPTION_TERM = 8;
-const WEIGHT_COUNTRY_MATCH = 15;
 const MAX_DESCRIPTION_POINTS = 24;
 
 /** Below this, a connection is not sent to the model at all. */
@@ -105,7 +101,6 @@ export const MAX_CANDIDATES_PER_DEFINITION = 120;
 /** Pre-computed vocabulary for a definition, built once per matching run. */
 export type DefinitionVocabulary = {
   definition: MatchDefinition;
-  countryNormalized: string | null;
   positionPhrases: string[];
   positionTerms: Set<string>;
   industryPhrase: string | null;
@@ -126,7 +121,6 @@ export function buildVocabulary(definition: MatchDefinition): DefinitionVocabula
 
   return {
     definition,
-    countryNormalized: normalize(definition.country) || null,
     positionPhrases,
     positionTerms,
     industryPhrase,
@@ -144,9 +138,6 @@ export function buildVocabulary(definition: MatchDefinition): DefinitionVocabula
  * Scores one connection against one definition.
  *
  * Returns `null` when the connection is excluded outright:
- *   - the definition names a country and the connection is known to be
- *     elsewhere (an unknown country is NOT an exclusion — LinkedIn's
- *     Connections.csv often has no location at all);
  *   - the connection carries no company and no position, so there is nothing
  *     to judge;
  *   - the score falls below `SHORTLIST_THRESHOLD`.
@@ -159,16 +150,6 @@ export function scoreCandidate(
   const company = normalize(connection.company);
   if (!position && !company) return null;
   if (!vocabulary.hasSignal) return null;
-
-  const connectionCountry = normalize(connection.country);
-  if (
-    vocabulary.countryNormalized &&
-    connectionCountry &&
-    !connectionCountry.includes(vocabulary.countryNormalized) &&
-    !vocabulary.countryNormalized.includes(connectionCountry)
-  ) {
-    return null;
-  }
 
   const haystack = `${position} ${company}`;
   const haystackTerms = new Set([...terms(position), ...terms(company)]);
@@ -204,11 +185,6 @@ export function scoreCandidate(
   if (descriptionOverlap.length > 0) {
     score += Math.min(MAX_DESCRIPTION_POINTS, descriptionOverlap.length * WEIGHT_DESCRIPTION_TERM);
     reasons.push(`Matches the definition's wording on: ${descriptionOverlap.slice(0, 4).join(", ")}`);
-  }
-
-  if (vocabulary.countryNormalized && connectionCountry) {
-    score += WEIGHT_COUNTRY_MATCH;
-    reasons.push(`Based in ${connection.country}`);
   }
 
   if (score < SHORTLIST_THRESHOLD) return null;

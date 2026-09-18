@@ -132,6 +132,12 @@ model Connection {
   company       String?
   position      String?
   connectedOn   DateTime?
+
+  /// DEPRECATED and unread. LinkedIn's Connections.csv has no country or
+  /// location column, so ingestion never writes this and it is null for every
+  /// row. No code reads it. Kept rather than dropped because dropping a column
+  /// is irreversible, and a future enrichment step (or a change to LinkedIn's
+  /// export format) can start populating it without needing a restore.
   country       String?
   createdAt     DateTime    @default(now())
 
@@ -292,6 +298,12 @@ model ICP {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
+
+  /// DEPRECATED and unread. Country matching was removed because
+  /// `Connection.country` can never be populated from a LinkedIn export, so a
+  /// country on an ICP could only ever filter out everything or nothing. The
+  /// column is kept because existing ICPs may already hold a value an admin
+  /// typed, and so a future enrichment step can revive the criterion.
   country        String?
   industry       String?
   positions      String[]

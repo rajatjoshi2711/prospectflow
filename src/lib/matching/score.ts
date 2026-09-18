@@ -48,7 +48,6 @@ function definitionPrompt(definition: MatchDefinition): string {
       ? `TARGET PROFILE (Ideal Customer Profile): ${definition.name}`
       : `TARGET PROFILE (channel partner): ${definition.name}`,
   );
-  if (definition.country) lines.push(`Country: ${definition.country}`);
   if (definition.industry) lines.push(`Industry: ${definition.industry}`);
   if (definition.positions.length > 0) {
     lines.push(`Target positions: ${definition.positions.join(", ")}`);
@@ -76,7 +75,6 @@ function candidatesPrompt(batch: PrefilterHit[]): string {
         `title: ${hit.connection.position ?? "unknown"}`,
         `company: ${hit.connection.company ?? "unknown"}`,
       ];
-      if (hit.connection.country) parts.push(`country: ${hit.connection.country}`);
       if (hit.reasons.length > 0) parts.push(`keyword signals: ${hit.reasons.join("; ")}`);
       return `- ${parts.join(" | ")}`;
     })

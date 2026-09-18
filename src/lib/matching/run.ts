@@ -61,7 +61,6 @@ function toDefinition(
   icp: {
     id: string;
     name: string;
-    country: string | null;
     industry: string | null;
     positions: string[];
     description: string | null;
@@ -80,7 +79,6 @@ function toPartnerDefinition(partner: {
     id: partner.id,
     kind: "CHANNEL_PARTNER",
     name: partner.name,
-    country: null,
     industry: partner.industry,
     positions: [],
     description: partner.criteria,
@@ -108,7 +106,6 @@ async function loadDefinitions(
           select: {
             id: true,
             name: true,
-            country: true,
             industry: true,
             positions: true,
             description: true,
@@ -168,7 +165,6 @@ export async function computeMatchesForUser({
       lastName: true,
       company: true,
       position: true,
-      country: true,
     },
   });
 

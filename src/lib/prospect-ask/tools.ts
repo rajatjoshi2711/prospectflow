@@ -101,13 +101,12 @@ const getConnectionsByFilter: ProspectAskTool = {
   definition: {
     name: "getConnectionsByFilter",
     description:
-      "Search the signed-in user's own LinkedIn connections from their most recent import. Filter by free-text name, company, country, or job title. Returns matching people with their company, title and country, plus the total number of matches.",
+      "Search the signed-in user's own LinkedIn connections from their most recent import. Filter by free-text name, company, or job title. Returns matching people with their company and title, plus the total number of matches. There is no location data: LinkedIn exports carry no country or city, so location questions cannot be answered from this tool.",
     parameters: {
       type: "object",
       properties: {
         name: { type: "string", description: "Part of a person's first or last name." },
         company: { type: "string", description: "Part of an employer name." },
-        country: { type: "string", description: "Part of a country name." },
         position: { type: "string", description: "Part of a job title, e.g. 'head of sales'." },
         limit: { type: "integer", description: `Rows to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.` },
       },
@@ -130,8 +129,6 @@ const getConnectionsByFilter: ProspectAskTool = {
     }
     const company = str(args.company);
     if (company) and.push({ company: { contains: company, mode: "insensitive" } });
-    const country = str(args.country);
-    if (country) and.push({ country: { contains: country, mode: "insensitive" } });
     const position = str(args.position);
     if (position) and.push({ position: { contains: position, mode: "insensitive" } });
 
@@ -153,7 +150,6 @@ const getConnectionsByFilter: ProspectAskTool = {
           lastName: true,
           company: true,
           position: true,
-          country: true,
           connectedOn: true,
         },
       }),
@@ -166,7 +162,6 @@ const getConnectionsByFilter: ProspectAskTool = {
         name: fullName(row),
         company: row.company,
         position: row.position,
-        country: row.country,
         connectedOn: row.connectedOn?.toISOString().slice(0, 10) ?? null,
       })),
     };
@@ -181,7 +176,7 @@ const getTopProspectsByICP: ProspectAskTool = {
   definition: {
     name: "getTopProspectsByICP",
     description:
-      "List the highest-scoring ICP or channel-partner matches. Use scope 'me' for the signed-in user's own connections (the default) or 'organization' for everyone in their organization. Each row includes the match score, the definition it matched, and the AI rationale.",
+      "List the highest-scoring ICP or channel-partner matches. Use scope 'me' for the signed-in user's own connections (the default) or 'organization' for everyone in their organization. Each row includes the match score, the definition it matched, and the AI rationale. There is no location data: LinkedIn exports carry no country or city, so location questions cannot be answered from this tool.",
     parameters: {
       type: "object",
       properties: {
@@ -199,7 +194,6 @@ const getTopProspectsByICP: ProspectAskTool = {
           type: "string",
           description: "Part of the name of a specific ICP or channel partner.",
         },
-        country: { type: "string", description: "Part of a country name." },
         minScore: { type: "integer", description: "Minimum match score, 0-100." },
         limit: { type: "integer", description: `Rows to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.` },
       },
@@ -214,9 +208,6 @@ const getTopProspectsByICP: ProspectAskTool = {
     const connectionScope: Prisma.ConnectionWhereInput = orgWide
       ? { importBatch: { user: { organizationId: scope.organizationId } } }
       : { importBatch: { userId: scope.userId } };
-
-    const country = str(args.country);
-    if (country) connectionScope.country = { contains: country, mode: "insensitive" };
 
     const definitionName = str(args.definitionName);
     const matchType =
@@ -262,7 +253,6 @@ const getTopProspectsByICP: ProspectAskTool = {
               lastName: true,
               company: true,
               position: true,
-              country: true,
               importBatch: { select: { user: { select: { name: true } } } },
             },
           },
@@ -278,7 +268,6 @@ const getTopProspectsByICP: ProspectAskTool = {
         name: fullName(row.connection),
         company: row.connection.company,
         position: row.connection.position,
-        country: row.connection.country,
         matchType: row.matchType,
         definition: row.icp?.name ?? row.channelPartner?.name ?? "Unknown",
         matchScore: row.score,

@@ -23,7 +23,6 @@ export default async function AdminIcpDetailPage({
     select: {
       id: true,
       name: true,
-      country: true,
       industry: true,
       positions: true,
       description: true,
@@ -54,7 +53,6 @@ export default async function AdminIcpDetailPage({
         initial={{
           id: icp.id,
           name: icp.name,
-          country: icp.country,
           industry: icp.industry,
           positions: icp.positions,
           description: icp.description,

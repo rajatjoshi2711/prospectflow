@@ -2,12 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { COUNTRIES } from "@/lib/matching/countries";
 
 export type IcpFormValues = {
   id?: string;
   name: string;
-  country: string | null;
   industry: string | null;
   positions: string[];
   description: string | null;
@@ -33,7 +31,6 @@ export function IcpForm({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [name, setName] = useState(initial?.name ?? "");
-  const [country, setCountry] = useState(initial?.country ?? "");
   const [industry, setIndustry] = useState(initial?.industry ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [positions, setPositions] = useState<string[]>(initial?.positions ?? []);
@@ -84,7 +81,6 @@ export function IcpForm({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: name.trim(),
-            country: country || null,
             industry: industry.trim() || null,
             positions: finalPositions,
             description: description.trim() || null,
@@ -178,29 +174,6 @@ export function IcpForm({
           placeholder="Mid-market ops leaders, DACH"
           maxLength={120}
         />
-      </div>
-
-      <div>
-        <label className="ef-label" htmlFor="icp-country">
-          Country
-        </label>
-        <select
-          id="icp-country"
-          className="ef-input"
-          value={country}
-          onChange={(event) => setCountry(event.target.value)}
-        >
-          <option value="">Any country</option>
-          {COUNTRIES.map((entry) => (
-            <option key={entry} value={entry}>
-              {entry}
-            </option>
-          ))}
-        </select>
-        <p className="ef-caption mt-1">
-          Connections known to be somewhere else are excluded. Connections with no
-          location in the export are still considered.
-        </p>
       </div>
 
       <div>

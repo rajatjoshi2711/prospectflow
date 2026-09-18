@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { isKnownCountry } from "@/lib/matching/countries";
 
 /** Trims, then treats an empty string as "not set". */
 const optionalText = (max: number) =>
@@ -14,10 +13,6 @@ const optionalText = (max: number) =>
 
 export const icpInputSchema = z.object({
   name: z.string().trim().min(1, "Name is required.").max(120),
-  country: optionalText(80).refine(
-    (value) => value === null || isKnownCountry(value),
-    "Pick a country from the list.",
-  ),
   industry: optionalText(120),
   /**
    * Sent as an array of strings by the form. Blank entries are dropped and

@@ -19,7 +19,6 @@ export default async function AdminIcpsPage() {
     select: {
       id: true,
       name: true,
-      country: true,
       industry: true,
       positions: true,
       description: true,
@@ -57,7 +56,7 @@ export default async function AdminIcpsPage() {
             <table className="w-full border-collapse text-left">
               <thead>
                 <tr style={{ background: "var(--bg-subtle)" }}>
-                  {["Name", "Country", "Industry", "Positions", "Matches", "Updated", ""].map(
+                  {["Name", "Industry", "Positions", "Matches", "Updated", ""].map(
                     (header, index) => (
                       <th
                         key={header || `col-${index}`}
@@ -76,7 +75,6 @@ export default async function AdminIcpsPage() {
                     <td className="ef-small px-5 py-3" style={{ fontWeight: 600 }}>
                       {icp.name}
                     </td>
-                    <td className="ef-small px-5 py-3">{icp.country ?? "Any"}</td>
                     <td className="ef-small px-5 py-3">{icp.industry ?? "—"}</td>
                     <td className="ef-small px-5 py-3" style={{ maxWidth: 260 }}>
                       {icp.positions.length > 0 ? icp.positions.join(", ") : "—"}

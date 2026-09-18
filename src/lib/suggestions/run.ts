@@ -73,7 +73,6 @@ function candidateLine(candidate: SuggestionCandidate): string {
     `person: ${candidate.personName}`,
     `title: ${candidate.position ?? "unknown"}`,
     `company: ${candidate.company ?? "unknown"}`,
-    `country: ${candidate.country ?? "unknown"}`,
     `${candidate.matchType === "ICP" ? "matchesICP" : "matchesChannelPartner"}: ${candidate.definitionName} (${candidate.matchScore}/100)`,
     `relationshipScore: ${candidate.relationshipScore ?? "unscored"}`,
     `alsoKnownByOtherMembers: ${candidate.alsoKnownByCount}${

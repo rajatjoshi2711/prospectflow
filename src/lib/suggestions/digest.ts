@@ -31,7 +31,6 @@ export type SuggestionCandidate = {
   personName: string;
   company: string | null;
   position: string | null;
-  country: string | null;
   matchType: "ICP" | "CHANNEL_PARTNER";
   definitionName: string;
   matchScore: number;
@@ -103,7 +102,6 @@ export async function buildOrgDigest(organizationId: string): Promise<OrgDigest>
             lastName: true,
             company: true,
             position: true,
-            country: true,
           },
         },
       },
@@ -131,7 +129,6 @@ export async function buildOrgDigest(organizationId: string): Promise<OrgDigest>
             .trim() || "Unknown",
         company: match.connection.company,
         position: match.connection.position,
-        country: match.connection.country,
         matchType: match.matchType,
         definitionName: match.icp?.name ?? match.channelPartner?.name ?? "Unknown",
         matchScore: match.score,

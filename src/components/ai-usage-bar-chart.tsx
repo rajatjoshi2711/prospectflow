@@ -6,9 +6,8 @@ import { useId, useState } from "react";
  * Usage by model / by use case.
  *
  * FORM: ranked magnitude across a single measure (tokens) -> horizontal bar
- * chart, the same form and mark spec as `country-bar-chart.tsx`. One series, so
- * no legend (the card title names it) and every bar shares one hue; length
- * carries the whole comparison. Values are direct-labelled at the bar end, so
+ * chart. One series, so no legend (the card title names it) and every bar
+ * shares one hue; length carries the whole comparison. Values are direct-labelled at the bar end, so
  * there is no value axis to read against and no grid.
  *
  * Bars are ordered by size and the hue is fixed, never assigned by rank — a
