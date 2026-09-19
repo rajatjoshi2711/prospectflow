@@ -55,6 +55,7 @@ cp .env.example .env
 | Variable | Required in | Notes |
 | --- | --- | --- |
 | `DATABASE_URL` | Phase 1 | Postgres connection string. Any Postgres works (local, Neon, Supabase, Vercel Postgres, etc.). |
+| `DIRECT_DATABASE_URL` | Yes, wherever migrations run | Direct (non-pooled) connection string, used **only** by Prisma Migrate. On Neon it is `DATABASE_URL` with `-pooler` removed from the hostname. Prisma Migrate takes a session-scoped advisory lock that a transaction-mode pooler cannot hold, so `migrate deploy` through the pooler fails with `P1002` after 10s. Runtime queries keep using the pooled `DATABASE_URL`. `prisma generate` does not need it, so `npm install` and `next build` work without it — but `prisma migrate deploy`/`status`/`validate` do. |
 | `AUTH_SECRET` | Phase 1 | Random string used to sign session JWTs. Generate with `openssl rand -base64 32`. |
 | `BLOB_STORE_ID` / `VERCEL_OIDC_TOKEN` / `BLOB_WEBHOOK_PUBLIC_KEY` | Phase 2 | Vercel Blob, OIDC auth. Auto-injected by Vercel once the Blob store is connected to the project; run `vercel env pull` for local dev. See "Setting up Vercel Blob (OIDC)" below. `BLOB_READ_WRITE_TOKEN` is **not** required. |
 | `VERCEL_BLOB_CALLBACK_URL` | No — local testing only | Public tunnel URL so Vercel's `onUploadCompleted` webhook can reach your dev server. |
