@@ -137,11 +137,6 @@ export default async function CompanyDetailPage({
         </div>
       ) : null}
 
-      <p className="ef-caption mb-4">
-        Snapshot from your import on{" "}
-        {(batch.completedAt ?? batch.createdAt).toLocaleDateString()}.
-      </p>
-
       <ProspectTable
         rows={rows}
         total={total}

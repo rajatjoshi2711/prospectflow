@@ -19,22 +19,21 @@ export const dynamic = "force-dynamic";
  * account-shaped: three people at one target company is one opportunity, and
  * the only way to see that is to roll the network up by employer.
  *
- * THE HONESTY PROBLEM, STATED ON THE PAGE
- * ---------------------------------------
+ * GROUPING IS APPROXIMATE
+ * -----------------------
  * `Connection.company` is free text off a CSV. The grouping is a best effort
  * (see `src/lib/companies/normalize.ts`) and it is wrong in both directions at
  * the margins — it will not know that "IBM" and "International Business
  * Machines" are one employer, and it cannot tell two unrelated firms with the
- * same name apart. So the page says that in plain words above the table, every
- * grouped row shows how many raw spellings it folded, and the company page
- * lists those spellings. The reader can check the work.
+ * same name apart. The explanatory copy that used to say so on the page was
+ * removed at the user's request; the evidence remains, in that every grouped
+ * row shows how many raw spellings it folded and the company page lists them.
  *
- * CONNECTIONS WITH NO COMPANY are EXCLUDED from the table and reported as a
- * count instead. The alternative — a bucket called "Unknown" — puts a row in a
- * list of employers that is not an employer, and it would sort and rank
- * alongside real accounts as if it were one. A blank cell in the export means
- * the person did not fill in their profile; it is missing data, and missing
- * data gets stated, not named.
+ * CONNECTIONS WITH NO COMPANY are EXCLUDED from the table. `fetchCompanyPage`
+ * still returns the count, but nothing renders it now. The alternative — a
+ * bucket called "Unknown" — puts a row in a list of employers that is not an
+ * employer, and it would sort and rank alongside real accounts as if it were
+ * one.
  */
 export default async function CompaniesPage({
   searchParams,
@@ -82,7 +81,7 @@ export default async function CompaniesPage({
     );
   }
 
-  const { rows, total, page, withoutCompany } = await fetchCompanyPage({
+  const { rows, total, page } = await fetchCompanyPage({
     importBatchId: batch.id,
     organizationId: session.organizationId,
     page: params.page,
@@ -94,20 +93,6 @@ export default async function CompaniesPage({
   return (
     <div>
       {header}
-
-      {withoutCompany > 0 ? (
-        <p className="ef-caption mb-6" style={{ maxWidth: 820 }}>
-          {withoutCompany.toLocaleString()}{" "}
-          {withoutCompany === 1 ? "connection has" : "connections have"} no
-          company on their profile in this export and{" "}
-          {withoutCompany === 1 ? "is" : "are"} not counted below.
-        </p>
-      ) : null}
-
-      <p className="ef-caption mb-4">
-        Snapshot from your import on{" "}
-        {(batch.completedAt ?? batch.createdAt).toLocaleDateString()}.
-      </p>
 
       <CompanyTable
         rows={rows}
