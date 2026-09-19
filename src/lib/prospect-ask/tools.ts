@@ -64,6 +64,12 @@ function str(raw: unknown): string | null {
 }
 
 function num(raw: unknown): number | null {
+  // `Number(null)` is 0, and 0 is finite — so without this guard an explicit
+  // `"limit": null` from the model would read as a real zero rather than as
+  // absent, and a request for the default number of rows would return none.
+  // Models send null for "nothing here" as readily as they omit the key (see
+  // the note on `optionalString` above), so both spellings must mean absent.
+  if (raw === null || raw === undefined || raw === "") return null;
   const value = typeof raw === "number" ? raw : Number(raw);
   return Number.isFinite(value) ? value : null;
 }
@@ -88,6 +94,39 @@ export type ProspectAskTool = {
   execute: (args: Record<string, unknown>, scope: ToolScope) => Promise<ToolResult>;
 };
 
+/**
+ * Schema builders for OPTIONAL tool parameters.
+ *
+ * Every parameter on every tool here is optional, and a model with nothing to
+ * put in one may either omit it or send an explicit `null`. Groq validates the
+ * model's tool-call arguments against these schemas BEFORE we ever see them,
+ * and rejects the whole request with a 400 when they disagree. A live
+ * ProspectAsk failure was exactly this:
+ *
+ *   parameters for tool getCampaignStatusSummary did not match schema:
+ *   `/campaignName`: expected string, but got null
+ *
+ * So `"string"` alone is wrong for an optional field: it describes what we
+ * want, not what a model legitimately sends. `["string", "null"]` accepts both
+ * spellings of absence, and the `str`/`num` readers below already treat null
+ * as absent. An enum needs `null` in its list too, or the enum check rejects
+ * the value the type check just allowed.
+ *
+ * Use these rather than hand-writing a property, so a new tool cannot
+ * reintroduce the same 400.
+ */
+function optionalString(description: string) {
+  return { type: ["string", "null"], description };
+}
+
+function optionalInteger(description: string) {
+  return { type: ["integer", "null"], description };
+}
+
+function optionalEnum(values: string[], description: string) {
+  return { type: ["string", "null"], enum: [...values, null], description };
+}
+
 const NO_IMPORT: ToolResult = {
   note: "This user has not completed a LinkedIn import yet, so there is no connection data to query. Say so plainly rather than guessing.",
   rows: [],
@@ -105,10 +144,10 @@ const getConnectionsByFilter: ProspectAskTool = {
     parameters: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Part of a person's first or last name." },
-        company: { type: "string", description: "Part of an employer name." },
-        position: { type: "string", description: "Part of a job title, e.g. 'head of sales'." },
-        limit: { type: "integer", description: `Rows to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.` },
+        name: optionalString("Part of a person's first or last name."),
+        company: optionalString("Part of an employer name."),
+        position: optionalString("Part of a job title, e.g. 'head of sales'."),
+        limit: optionalInteger(`Rows to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.`),
       },
       additionalProperties: false,
     },
@@ -180,22 +219,14 @@ const getTopProspectsByICP: ProspectAskTool = {
     parameters: {
       type: "object",
       properties: {
-        scope: {
-          type: "string",
-          enum: ["me", "organization"],
-          description: "Whose connections to search. Default 'me'.",
-        },
-        matchType: {
-          type: "string",
-          enum: ["ICP", "CHANNEL_PARTNER"],
-          description: "Restrict to ICP matches or channel-partner matches. Omit for both.",
-        },
-        definitionName: {
-          type: "string",
-          description: "Part of the name of a specific ICP or channel partner.",
-        },
-        minScore: { type: "integer", description: "Minimum match score, 0-100." },
-        limit: { type: "integer", description: `Rows to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.` },
+        scope: optionalEnum(["me", "organization"], "Whose connections to search. Default 'me'."),
+        matchType: optionalEnum(
+          ["ICP", "CHANNEL_PARTNER"],
+          "Restrict to ICP matches or channel-partner matches. Omit for both.",
+        ),
+        definitionName: optionalString("Part of the name of a specific ICP or channel partner."),
+        minScore: optionalInteger("Minimum match score, 0-100."),
+        limit: optionalInteger(`Rows to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.`),
       },
       additionalProperties: false,
     },
@@ -290,11 +321,8 @@ const getJobChangeEvents: ProspectAskTool = {
     parameters: {
       type: "object",
       properties: {
-        company: {
-          type: "string",
-          description: "Only changes involving this employer (old or new).",
-        },
-        limit: { type: "integer", description: `Rows to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.` },
+        company: optionalString("Only changes involving this employer (old or new)."),
+        limit: optionalInteger(`Rows to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.`),
       },
       additionalProperties: false,
     },
@@ -359,15 +387,11 @@ const getRelationshipScores: ProspectAskTool = {
     parameters: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Part of a person's name, to look one person up." },
-        company: { type: "string", description: "Part of an employer name." },
-        minScore: { type: "integer", description: "Minimum score, 0-100." },
-        order: {
-          type: "string",
-          enum: ["strongest", "weakest"],
-          description: "Sort direction. Default 'strongest'.",
-        },
-        limit: { type: "integer", description: `Rows to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.` },
+        name: optionalString("Part of a person's name, to look one person up."),
+        company: optionalString("Part of an employer name."),
+        minScore: optionalInteger("Minimum score, 0-100."),
+        order: optionalEnum(["strongest", "weakest"], "Sort direction. Default 'strongest'."),
+        limit: optionalInteger(`Rows to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.`),
       },
       additionalProperties: false,
     },
@@ -456,8 +480,8 @@ const getCampaignStatusSummary: ProspectAskTool = {
     parameters: {
       type: "object",
       properties: {
-        campaignName: { type: "string", description: "Part of a campaign name." },
-        limit: { type: "integer", description: `Campaigns to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.` },
+        campaignName: optionalString("Part of a campaign name."),
+        limit: optionalInteger(`Campaigns to return, 1-${MAX_ROWS}. Default ${DEFAULT_ROWS}.`),
       },
       additionalProperties: false,
     },
@@ -525,11 +549,10 @@ const getConnectionCountsOverTime: ProspectAskTool = {
     parameters: {
       type: "object",
       properties: {
-        scope: {
-          type: "string",
-          enum: ["me", "organization"],
-          description: "Default 'organization'. Use 'me' for just the signed-in user.",
-        },
+        scope: optionalEnum(
+          ["me", "organization"],
+          "Default 'organization'. Use 'me' for just the signed-in user.",
+        ),
       },
       additionalProperties: false,
     },
