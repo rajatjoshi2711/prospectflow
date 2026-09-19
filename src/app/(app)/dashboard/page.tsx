@@ -294,6 +294,7 @@ export default async function DashboardPage() {
               key={`${item.identityKey ?? item.name}-${item.lastInboundAt.getTime()}`}
               person={item}
               detail={`Waiting ${formatElapsed(item.lastInboundAt)}`}
+              showPosition
             />
           ))}
         </ActionCard>
@@ -607,7 +608,28 @@ function ActionCard({
  * but does not connect to a profile — the name renders plain rather than
  * linking somewhere that would 404.
  */
-function ActionRow({ person, detail }: { person: ActionPerson; detail: string }) {
+function ActionRow({
+  person,
+  detail,
+  showPosition = false,
+}: {
+  person: ActionPerson;
+  detail: string;
+  /**
+   * Show their job title alongside the employer.
+   *
+   * Opt-in rather than on for every list: deciding who to reply to turns on
+   * who the person actually is, so the reply list wants it. The other two
+   * lists were not asked for it, and this component is shared — flipping it
+   * there is one prop if that changes.
+   */
+  showPosition?: boolean;
+}) {
+  // Same convention as the prospect page header, so a person reads the same
+  // way wherever they appear.
+  const subtitle = showPosition
+    ? [person.position, person.company].filter(Boolean).join(" · ")
+    : (person.company ?? "");
   return (
     <li
       className="border-t pt-3 first:border-t-0 first:pt-0"
@@ -625,7 +647,7 @@ function ActionRow({ person, detail }: { person: ActionPerson; detail: string })
           person.name
         )}
       </p>
-      {person.company ? <p className="ef-caption">{person.company}</p> : null}
+      {subtitle ? <p className="ef-caption">{subtitle}</p> : null}
       <p className="ef-caption" style={{ color: "var(--neutral-400)" }}>
         {detail}
       </p>

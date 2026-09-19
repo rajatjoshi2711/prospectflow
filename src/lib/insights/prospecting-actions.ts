@@ -76,6 +76,8 @@ export type ActionPerson = {
   identityKey: string | null;
   name: string;
   company: string | null;
+  /** Their job title from the export. Null when they left it blank. */
+  position: string | null;
 };
 
 export type AwaitingReplyItem = ActionPerson & {
@@ -211,6 +213,7 @@ export async function loadAwaitingReply(
           row.counterpartyName,
         ),
         company: connection?.company ?? null,
+        position: connection?.position ?? null,
         lastInboundAt: row.lastInboundAt,
       };
     }),
@@ -249,6 +252,7 @@ export async function loadRecentlyConnectedNeverMessaged(
       firstName: string | null;
       lastName: string | null;
       company: string | null;
+      position: string | null;
       connectedOn: Date;
       total: number;
     }[]
@@ -265,7 +269,8 @@ export async function loadRecentlyConnectedNeverMessaged(
     SELECT c."identityKey" AS "identityKey",
            c."firstName"   AS "firstName",
            c."lastName"    AS "lastName",
-           c."company"     AS "company",
+           c."company"      AS "company",
+           c."position"     AS "position",
            c."connectedOn" AS "connectedOn",
            (COUNT(*) OVER ())::int AS total
     FROM "Connection" c
@@ -284,6 +289,7 @@ export async function loadRecentlyConnectedNeverMessaged(
       identityKey: row.identityKey,
       name: displayName(row.firstName, row.lastName, null),
       company: row.company,
+      position: row.position,
       connectedOn: row.connectedOn,
     })),
   };
@@ -320,6 +326,7 @@ export async function loadDormantHighValue(
         firstName: string | null;
         lastName: string | null;
         company: string | null;
+        position: string | null;
         relationshipScore: number;
         lastMessageAt: Date;
         total: number;
@@ -343,7 +350,8 @@ export async function loadDormantHighValue(
         SELECT c."identityKey" AS "identityKey",
                c."firstName"   AS "firstName",
                c."lastName"    AS "lastName",
-               c."company"     AS "company",
+               c."company"      AS "company",
+               c."position"     AS "position",
                c."relationshipScore" AS "relationshipScore",
                GREATEST(byIdentity."lastAt", byName."lastAt") AS "lastMessageAt"
         FROM "Connection" c
@@ -352,7 +360,7 @@ export async function loadDormantHighValue(
         WHERE c."importBatchId" = ${importBatchId}
           AND c."relationshipScore" >= ${HIGH_VALUE_SCORE}
       )
-      SELECT "identityKey", "firstName", "lastName", "company", "relationshipScore", "lastMessageAt",
+      SELECT "identityKey", "firstName", "lastName", "company", "position", "relationshipScore", "lastMessageAt",
              (COUNT(*) OVER ())::int AS total
       FROM candidates
       WHERE "lastMessageAt" IS NOT NULL
@@ -372,6 +380,7 @@ export async function loadDormantHighValue(
       identityKey: row.identityKey,
       name: displayName(row.firstName, row.lastName, null),
       company: row.company,
+      position: row.position,
       lastMessageAt: row.lastMessageAt,
       relationshipScore: row.relationshipScore,
     })),
@@ -383,6 +392,7 @@ type ResolvedConnection = {
   firstName: string | null;
   lastName: string | null;
   company: string | null;
+  position: string | null;
 };
 
 /**
@@ -410,7 +420,14 @@ async function resolveConnections(
             importBatchId,
             OR: [{ identityKey: { in: identityKeys } }, { nameKey: { in: nameKeys } }],
           },
-          select: { identityKey: true, nameKey: true, firstName: true, lastName: true, company: true },
+          select: {
+            identityKey: true,
+            nameKey: true,
+            firstName: true,
+            lastName: true,
+            company: true,
+            position: true,
+          },
         });
 
   const byIdentity = new Map<string, ResolvedConnection>();
@@ -421,6 +438,7 @@ async function resolveConnections(
       firstName: match.firstName,
       lastName: match.lastName,
       company: match.company,
+      position: match.position,
     };
     if (!byIdentity.has(match.identityKey)) byIdentity.set(match.identityKey, value);
     if (match.nameKey && !byName.has(match.nameKey)) byName.set(match.nameKey, value);
