@@ -513,3 +513,42 @@ body {
   border-top: 1px solid var(--border-subtle);
   margin: 12px 0;
 }
+
+/* GitHub-flavoured markdown: tables, task lists, strikethrough.
+   Tailwind's preflight removes table borders and collapses, so a model's
+   table would otherwise render as unaligned text with no cell separation. */
+.ef-markdown table {
+  border-collapse: collapse;
+  width: auto;
+  min-width: 100%;
+  margin: 0 0 10px;
+  font-size: var(--fs-small);
+}
+.ef-markdown th,
+.ef-markdown td {
+  border: 1px solid var(--border-subtle);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.ef-markdown th {
+  background: var(--bg-subtle);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ef-markdown tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--bg-subtle) 55%, transparent);
+}
+.ef-markdown del {
+  text-decoration: line-through;
+  color: var(--text-secondary);
+}
+/* Task lists come through as list items carrying a checkbox; drop the bullet
+   so the checkbox is the only marker. */
+.ef-markdown li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -20px;
+}
+.ef-markdown li > input[type="checkbox"] {
+  margin-right: 6px;
+}

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { RenderedMarkdown } from "@/components/rendered-markdown";
 import type { ProspectResearchView } from "@/lib/prospects/detail";
 
 /**
@@ -132,36 +132,8 @@ function ResearchEntry({
         <span className="ef-caption">Run by {entry.requestedByName}</span>
       </div>
 
-      {/* The model writes markdown, so it is rendered as markdown — otherwise
-          the reader sees literal ** and - characters.
-
-          SAFETY: this text is untrusted. It summarises web pages we did not
-          write, and a page can contain anything. `react-markdown` is safe for
-          exactly this: it builds React elements rather than setting innerHTML,
-          and it ignores raw HTML unless `rehype-raw` is added — which it
-          deliberately is not. It also runs its own URL transform, so a
-          `javascript:` link in the model's output is dropped rather than
-          rendered. Do not add `rehype-raw` or `dangerouslySetInnerHTML` here. */}
-      <div className="ef-small ef-markdown" style={{ wordBreak: "break-word" }}>
-        <ReactMarkdown
-          components={{
-            // Links in the body are outbound and untrusted, same rule as the
-            // citation links below.
-            a: ({ href, children }) => (
-              <a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer nofollow"
-                style={{ color: "var(--blue-500)" }}
-              >
-                {children}
-              </a>
-            ),
-          }}
-        >
-          {entry.summary}
-        </ReactMarkdown>
-      </div>
+      {/* Untrusted model output — see the safety note on `RenderedMarkdown`. */}
+      <RenderedMarkdown>{entry.summary}</RenderedMarkdown>
 
       <div className="mt-3">
         {entry.citations.length === 0 ? (

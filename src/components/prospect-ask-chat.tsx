@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { RenderedMarkdown } from "@/components/rendered-markdown";
 
 /**
  * ProspectAsk chat.
@@ -141,12 +142,19 @@ export function ProspectAskChat({ aiConfigured }: { aiConfigured: boolean }) {
               padding: "12px 16px",
             }}
           >
-            <p
-              className="ef-small"
-              style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
-            >
-              {turn.content}
-            </p>
+            {/* Only the assistant's side is markdown. The user's turn is what
+                they literally typed, and re-interpreting it would quietly
+                change their own words back at them. */}
+            {turn.role === "user" ? (
+              <p
+                className="ef-small"
+                style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+              >
+                {turn.content}
+              </p>
+            ) : (
+              <RenderedMarkdown>{turn.content}</RenderedMarkdown>
+            )}
             {turn.tools && turn.tools.length > 0 ? (
               <p
                 className="ef-caption"
