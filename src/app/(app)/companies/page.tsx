@@ -56,11 +56,9 @@ export default async function CompaniesPage({
   const header = (
     <>
       <p className="ef-eyebrow mb-2">Network</p>
-      <h1 className="ef-page mb-2">Companies</h1>
-      <p className="ef-lead mb-6" style={{ maxWidth: 680 }}>
-        Your network rolled up by employer, so you can see where you already
-        have a way in.
-      </p>
+      {/* Carries the header's bottom spacing itself: other pages get it from
+          the lead paragraph under the title, and this page has none. */}
+      <h1 className="ef-page mb-6">Companies</h1>
     </>
   );
 
@@ -97,31 +95,14 @@ export default async function CompaniesPage({
     <div>
       {header}
 
-      <div className="ef-card mb-6" style={{ maxWidth: 820 }}>
-        <p className="ef-small" style={{ fontWeight: 600 }}>
-          Grouping is approximate
+      {withoutCompany > 0 ? (
+        <p className="ef-caption mb-6" style={{ maxWidth: 820 }}>
+          {withoutCompany.toLocaleString()}{" "}
+          {withoutCompany === 1 ? "connection has" : "connections have"} no
+          company on their profile in this export and{" "}
+          {withoutCompany === 1 ? "is" : "are"} not counted below.
         </p>
-        <p className="ef-small mt-1" style={{ color: "var(--text-secondary)" }}>
-          LinkedIn exports carry the company as free text, with no company id or
-          domain. Spellings are matched by folding case, punctuation and
-          endings like Inc, Ltd, LLC and GmbH, so &ldquo;Acme, Inc.&rdquo; and
-          &ldquo;ACME&rdquo; land together. It will not spot that
-          &ldquo;IBM&rdquo; and &ldquo;International Business Machines&rdquo;
-          are the same employer, and it cannot tell two unrelated firms with the
-          same name apart. Rows that folded more than one spelling say so, and
-          each company page lists exactly what was grouped.
-        </p>
-        {withoutCompany > 0 ? (
-          <p className="ef-small mt-3" style={{ color: "var(--text-secondary)" }}>
-            {withoutCompany.toLocaleString()}{" "}
-            {withoutCompany === 1 ? "connection has" : "connections have"} no
-            company on their profile in this export and{" "}
-            {withoutCompany === 1 ? "is" : "are"} not counted anywhere below. A
-            blank company is missing data, not an employer, so it is reported
-            here rather than grouped into a company that does not exist.
-          </p>
-        ) : null}
-      </div>
+      ) : null}
 
       <p className="ef-caption mb-4">
         Snapshot from your import on{" "}

@@ -125,9 +125,7 @@ export default async function CompanyDetailPage({
             {company.spellings} spellings grouped as one company
           </p>
           <p className="ef-small mt-1" style={{ color: "var(--text-secondary)" }}>
-            Grouping is approximate — a LinkedIn export has no company id, only
-            what each person typed. These are the exact spellings folded
-            together here:
+            These are the exact spellings folded together here:
           </p>
           <ul className="mt-2 flex flex-wrap gap-2">
             {company.spellingList.map((spelling) => (
