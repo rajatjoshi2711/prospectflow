@@ -24,19 +24,31 @@
  * non-ASCII characters.
  */
 
-export function encodePersonKey(identityKey: string): string {
-  const bytes = new TextEncoder().encode(identityKey);
+/**
+ * The base64url primitives, exported so that OTHER things addressed by a
+ * free-text key use this exact scheme rather than inventing a second one.
+ * `src/lib/companies/company-key.ts` is the other consumer: a company key is
+ * derived from a CSV-supplied company name and carries the same problem
+ * characters (`/`, `.`, `&`, spaces, non-ASCII), so it is encoded identically.
+ * One implementation means the two sides can never drift apart.
+ */
+export function encodeUrlKey(value: string): string {
+  const bytes = new TextEncoder().encode(value);
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+export function encodePersonKey(identityKey: string): string {
+  return encodeUrlKey(identityKey);
+}
+
 /**
  * Returns null for anything that is not a well-formed encoding of a non-empty
- * key. The caller turns that into a 404: a malformed key names no person, and
- * it must never be passed into a query as a raw string.
+ * key. The caller turns that into a 404: a malformed key names nothing, and it
+ * must never be passed into a query as a raw string.
  */
-export function decodePersonKey(encoded: string): string | null {
+export function decodeUrlKey(encoded: string): string | null {
   if (!encoded || encoded.length > 2048) return null;
   if (!/^[A-Za-z0-9_-]+$/.test(encoded)) return null;
 
@@ -56,6 +68,10 @@ export function decodePersonKey(encoded: string): string | null {
   } catch {
     return null;
   }
+}
+
+export function decodePersonKey(encoded: string): string | null {
+  return decodeUrlKey(encoded);
 }
 
 /**

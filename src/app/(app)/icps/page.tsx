@@ -19,6 +19,11 @@ export default async function IcpsDashboardPage({
       organizationId={session.organizationId}
       isAdmin={session.role === "ADMIN"}
       searchParams={await searchParams}
+      // ICPs only. The people you fit your Ideal Customer Profile and have
+      // never written to are the most actionable thing on this page, so the
+      // count sits above the table with a one-click filter. Channel partners
+      // deliberately do not get it — see `MatchDashboard`'s `neverMessaged`.
+      neverMessaged
       copy={{
         eyebrow: "Prospects",
         title: "ICP matches",

@@ -555,7 +555,9 @@ function resolveBackLink(params: Record<string, string | string[] | undefined>):
   const label =
     path === "/connections"
       ? "All connections"
-      : path.startsWith("/icps")
+      : path.startsWith("/companies")
+        ? "Back to the company"
+        : path.startsWith("/icps")
         ? "ICP dashboard"
         : path.startsWith("/channel-partners")
           ? "Channel partners"

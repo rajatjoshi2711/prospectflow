@@ -2,8 +2,10 @@ import Link from "next/link";
 import type { MatchType } from "@prisma/client";
 import { ProspectTable } from "@/components/prospect-table";
 import { DefinitionFilter } from "@/components/definition-filter";
+import { UntappedToggle } from "@/components/untapped-toggle";
 import {
   MATCH_PAGE_SIZE,
+  countNeverMessagedMatches,
   fetchMatchPage,
   listDefinitions,
   parseMatchSearchParams,
@@ -22,6 +24,7 @@ export async function MatchDashboard({
   organizationId,
   isAdmin,
   searchParams,
+  neverMessaged = false,
   copy,
 }: {
   matchType: MatchType;
@@ -29,6 +32,16 @@ export async function MatchDashboard({
   organizationId: string;
   isAdmin: boolean;
   searchParams: Record<string, string | string[] | undefined>;
+  /**
+   * Adds the "never messaged" card and its filter.
+   *
+   * OPT-IN, not on for everyone. The underlying query is `matchType`-generic,
+   * so channel partners could have it for free — but the ask was for ICPs, and
+   * a dashboard that renders no control must not silently honour `?untapped=1`
+   * from a pasted URL either. Flipping this to `true` on
+   * `/channel-partners` is the whole change, if it is ever wanted.
+   */
+  neverMessaged?: boolean;
   copy: {
     eyebrow: string;
     title: string;
@@ -94,19 +107,35 @@ export async function MatchDashboard({
     );
   }
 
-  const { rows, total, page } = await fetchMatchPage({
-    matchType,
-    userId,
-    importBatchId: batch.id,
-    organizationId,
-    page: params.page,
-    sort: params.sort,
-    direction: params.direction,
-    query: params.query,
-    definitionId: params.definitionId,
-  });
+  const untapped = neverMessaged && params.unmessagedOnly;
 
-  const filtered = params.definitionId !== "" || params.query !== "";
+  const [{ rows, total, page }, untappedCount] = await Promise.all([
+    fetchMatchPage({
+      matchType,
+      userId,
+      importBatchId: batch.id,
+      organizationId,
+      page: params.page,
+      sort: params.sort,
+      direction: params.direction,
+      query: params.query,
+      definitionId: params.definitionId,
+      unmessagedOnly: untapped,
+    }),
+    // Counted under the SAME definition filter and search as the table, so the
+    // card and the list can never disagree about what they are describing.
+    neverMessaged
+      ? countNeverMessagedMatches({
+          matchType,
+          importBatchId: batch.id,
+          organizationId,
+          definitionId: params.definitionId,
+          query: params.query,
+        })
+      : Promise.resolve(0),
+  ]);
+
+  const filtered = params.definitionId !== "" || params.query !== "" || untapped;
 
   return (
     <div>
@@ -124,6 +153,63 @@ export async function MatchDashboard({
           {(batch.completedAt ?? batch.createdAt).toLocaleDateString()}.
         </p>
       </div>
+
+      {/* THE UNTAPPED LIST.
+          A HIGHLIGHTED CARD ABOVE THE TABLE, not a filter chip inside it, and
+          not a separate list that replaces it. The count is the actionable
+          fact — "you match 214 people you have never written to" — and it has
+          to be visible without anyone opting in, which a filter control alone
+          would not achieve; a reader who never presses it never learns the
+          number. The card carries the filter as its call to action, so the
+          untapped set is one click away and the full list stays the default.
+          The number respects the definition filter and the search box, and the
+          filtered table pages like any other view. */}
+      {neverMessaged ? (
+        <div
+          className="ef-card ef-rise mb-6"
+          style={{ maxWidth: 820, borderColor: "var(--blue-200)" }}
+        >
+          <p className="ef-eyebrow mb-2">Untapped</p>
+          {untappedCount === 0 ? (
+            <>
+              <p className="ef-subhead">
+                {total === 0
+                  ? "Nothing to work through yet"
+                  : "You have messaged every match in this view"}
+              </p>
+              <p className="ef-small mt-1" style={{ color: "var(--text-secondary)" }}>
+                {total === 0
+                  ? "No matches in this view, so there is nothing to compare against your message history."
+                  : "Every person in this view has at least one message with you in your latest import."}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="ef-subhead">
+                {untappedCount.toLocaleString()}{" "}
+                {untappedCount === 1 ? "match you have" : "matches you have"} never
+                messaged
+              </p>
+              <p className="ef-small mt-1" style={{ color: "var(--text-secondary)" }}>
+                {untappedCount.toLocaleString()} of {total.toLocaleString()}{" "}
+                {params.definitionId || params.query ? "matches in this filter" : "matches"} have
+                no message with you anywhere in your latest import. Matched on
+                profile URL where the export gave one and on display name
+                otherwise, so someone who shares a name with a person you have
+                written to may be missing from this list.
+              </p>
+              <div className="mt-3">
+                <UntappedToggle active={untapped} />
+              </div>
+            </>
+          )}
+          {untapped && untappedCount === 0 ? (
+            <div className="mt-3">
+              <UntappedToggle active />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <ProspectTable
         rows={rows.map((row) => ({
@@ -160,7 +246,9 @@ export async function MatchDashboard({
             title={filtered ? "Nothing matches this filter" : "No matches yet"}
           >
             <p className="ef-small" style={{ color: "var(--text-secondary)" }}>
-              {filtered
+              {untapped
+                ? "Every match in this view has message history with you. Switch back to all matches to see them."
+                : filtered
                 ? "Try clearing the search box or picking a different definition."
                 : `Scoring runs in the background after every import and whenever an admin changes a ${copy.noun.toLowerCase()}. If you have just uploaded or just saved a definition, give it a minute and refresh. If it stays empty, none of your connections cleared the match threshold — widening the definition's positions or industry usually fixes that.`}
             </p>

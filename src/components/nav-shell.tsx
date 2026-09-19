@@ -33,6 +33,7 @@ const MAIN_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/org", label: "Org dashboard" },
   { href: "/connections", label: "Connections" },
+  { href: "/companies", label: "Companies" },
   { href: "/icps", label: "ICPs" },
   { href: "/channel-partners", label: "Channel partners" },
   { href: "/campaigns", label: "Campaigns" },

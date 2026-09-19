@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { MatchType, Prisma } from "@prisma/client";
+import { Prisma, type MatchType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   deriveRelationshipStrength,
@@ -53,6 +53,13 @@ export function parseMatchSearchParams(
     query: (read("q") ?? "").trim(),
     /** Selected ICP or channel partner id, or "" for all. */
     definitionId: (read("def") ?? "").trim(),
+    /**
+     * "Show only the people I have never messaged". A view opts INTO honouring
+     * this (see `MatchDashboard`'s `neverMessaged` prop) — parsing it here for
+     * everyone would silently change a URL's meaning on a dashboard that
+     * renders no control for it.
+     */
+    unmessagedOnly: read("untapped") === "1",
   };
 }
 
@@ -130,6 +137,169 @@ function buildOrderBy(
   }
 }
 
+/**
+ * NEVER MESSAGED — the untapped half of a match dashboard.
+ *
+ * DEFINITION: no `MessageRecord` in the batch whose counterparty `identityKey`
+ * or `nameKey` matches the connection's. That is the established counterparty
+ * join (`load-signals.ts`, `process-import.ts`), and the `nameKey` half of it
+ * is inexact — two people with the same display name share a key, so someone
+ * who shares a name with a person you HAVE messaged can be wrongly excluded
+ * from this list. The UI says so rather than presenting the count as exact.
+ *
+ * WHY RAW SQL: the anti-join cannot be written as a Prisma `where` without
+ * first pulling the set of messaged keys (thousands) into JavaScript. The
+ * shape below is the one `prospecting-actions.ts` established — materialise
+ * the key set once, then hash-anti-join — rather than a correlated NOT EXISTS
+ * that would re-probe ~18.6k message rows per candidate.
+ *
+ * COST: one index scan of `MessageRecord` on `@@index([importBatchId])`
+ * feeding a hash aggregate; one index scan of `ProspectMatch` on
+ * `@@index([matchType, score])` joined to the definition table on
+ * `@@index([organizationId])` and to `Connection` by primary key; one hash
+ * anti-join. No new index is required.
+ */
+function neverMessagedCandidatesSql({
+  matchType,
+  importBatchId,
+  organizationId,
+  definitionId,
+  query,
+}: {
+  matchType: MatchType;
+  importBatchId: string;
+  organizationId: string;
+  definitionId: string;
+  query: string;
+}): Prisma.Sql {
+  // Table and foreign key are chosen from `matchType`, an enum the caller
+  // already holds — never from the query string.
+  const definitionTable = Prisma.raw(matchType === "ICP" ? `"ICP"` : `"ChannelPartner"`);
+  const definitionFk = Prisma.raw(matchType === "ICP" ? `pm."icpId"` : `pm."channelPartnerId"`);
+
+  // Same term semantics as `buildWhere`: every term must match somewhere.
+  const terms = query.split(/\s+/).filter(Boolean).slice(0, 5);
+  const search =
+    terms.length === 0
+      ? Prisma.empty
+      : Prisma.sql`AND ${Prisma.join(
+          terms.map(
+            (term) =>
+              Prisma.sql`(c."firstName" ILIKE ${`%${term}%`} OR c."lastName" ILIKE ${`%${term}%`} OR c."company" ILIKE ${`%${term}%`})`,
+          ),
+          " AND ",
+        )}`;
+
+  const definitionFilter = definitionId
+    ? Prisma.sql`AND d."id" = ${definitionId}`
+    : Prisma.empty;
+
+  return Prisma.sql`
+    messaged AS (
+      SELECT DISTINCT "identityKey" AS k
+      FROM "MessageRecord"
+      WHERE "importBatchId" = ${importBatchId}
+      UNION
+      SELECT DISTINCT "nameKey" AS k
+      FROM "MessageRecord"
+      WHERE "importBatchId" = ${importBatchId} AND "nameKey" IS NOT NULL
+    ),
+    cand AS (
+      SELECT pm."id"              AS id,
+             pm."score"           AS score,
+             c."firstName"        AS "firstName",
+             c."lastName"         AS "lastName",
+             c."company"          AS "company",
+             c."relationshipScore" AS "relationshipScore"
+      FROM "ProspectMatch" pm
+      JOIN ${definitionTable} d ON d."id" = ${definitionFk}
+      JOIN "Connection" c ON c."id" = pm."connectionId"
+      WHERE pm."matchType" = ${matchType}::"MatchType"
+        AND d."organizationId" = ${organizationId}
+        AND c."importBatchId" = ${importBatchId}
+        ${definitionFilter}
+        ${search}
+        AND NOT EXISTS (SELECT 1 FROM messaged m WHERE m.k = c."identityKey")
+        AND (c."nameKey" IS NULL OR NOT EXISTS (SELECT 1 FROM messaged m WHERE m.k = c."nameKey"))
+    )
+  `;
+}
+
+/**
+ * How many matches the user has never messaged, under the CURRENT definition
+ * filter and search. Counts match rows, not people, so it is directly
+ * comparable with the table's own total (a person matching two ICPs is two
+ * rows in both numbers).
+ */
+export async function countNeverMessagedMatches(args: {
+  matchType: MatchType;
+  importBatchId: string;
+  organizationId: string;
+  definitionId: string;
+  query: string;
+}): Promise<number> {
+  const rows = await prisma.$queryRaw<{ total: number }[]>(Prisma.sql`
+    WITH ${neverMessagedCandidatesSql(args)}
+    SELECT COUNT(*)::int AS total FROM cand
+  `);
+  return rows[0]?.total ?? 0;
+}
+
+const NEVER_MESSAGED_ORDER_BY: Record<MatchSortKey, (direction: string) => string> = {
+  score: (d) => `cand.score ${d}, cand."lastName" ASC, cand.id ASC`,
+  name: (d) => `cand."firstName" ${d} NULLS LAST, cand.score DESC, cand.id ASC`,
+  company: (d) => `cand."company" ${d} NULLS LAST, cand.score DESC, cand.id ASC`,
+  // NULLS LAST in both directions, matching `buildOrderBy`: unscored is
+  // unknown, not weak.
+  strength: (d) => `cand."relationshipScore" ${d} NULLS LAST, cand.score DESC, cand.id ASC`,
+};
+
+/**
+ * One page of never-messaged match IDs, in the requested order, plus the total.
+ *
+ * Returning IDS rather than rows is deliberate: the ordering and the anti-join
+ * have to happen in SQL, but the SELECT, the tenancy-scoped relation loads and
+ * the enrichment below stay on the single Prisma path that the unfiltered view
+ * already uses. Only the 25 ids of the page cross back into JavaScript.
+ */
+async function fetchNeverMessagedMatchIds({
+  sort,
+  direction,
+  page,
+  pageSize,
+  ...candidates
+}: {
+  matchType: MatchType;
+  importBatchId: string;
+  organizationId: string;
+  definitionId: string;
+  query: string;
+  sort: MatchSortKey;
+  direction: "asc" | "desc";
+  page: number;
+  pageSize: number;
+}): Promise<{ ids: string[]; total: number; page: number }> {
+  const total = await countNeverMessagedMatches(candidates);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  if (total === 0) return { ids: [], total, page: safePage };
+
+  // `Prisma.raw` on the ORDER BY only, from the whitelist above keyed by an
+  // already-validated sort key — never from the query string.
+  const orderBy = Prisma.raw(
+    NEVER_MESSAGED_ORDER_BY[sort](direction === "asc" ? "ASC" : "DESC"),
+  );
+
+  const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+    WITH ${neverMessagedCandidatesSql(candidates)}
+    SELECT cand.id FROM cand
+    ORDER BY ${orderBy}
+    LIMIT ${pageSize} OFFSET ${(safePage - 1) * pageSize}
+  `);
+
+  return { ids: rows.map((row) => row.id), total, page: safePage };
+}
+
 export type MatchRow = ProspectRow & {
   matchScore: number;
   rationale: string | null;
@@ -147,6 +317,7 @@ export async function fetchMatchPage({
   direction,
   query,
   definitionId,
+  unmessagedOnly = false,
   pageSize = MATCH_PAGE_SIZE,
 }: {
   matchType: MatchType;
@@ -159,21 +330,46 @@ export async function fetchMatchPage({
   direction: "asc" | "desc";
   query: string;
   definitionId: string;
+  /** Restrict to matches with no message history. See `neverMessagedCandidatesSql`. */
+  unmessagedOnly?: boolean;
   pageSize?: number;
 }): Promise<{ rows: MatchRow[]; total: number; page: number }> {
   const where = buildWhere({ matchType, importBatchId, organizationId, definitionId, query });
 
-  const total = await prisma.prospectMatch.count({ where });
+  // The never-messaged view orders and pages in SQL (the anti-join cannot be a
+  // Prisma predicate) and hands back only the ids of the page; everything
+  // after this point is the one shared path.
+  const idPage = unmessagedOnly
+    ? await fetchNeverMessagedMatchIds({
+        matchType,
+        importBatchId,
+        organizationId,
+        definitionId,
+        query,
+        sort,
+        direction,
+        page,
+        pageSize,
+      })
+    : null;
+
+  const total = idPage ? idPage.total : await prisma.prospectMatch.count({ where });
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const safePage = Math.min(Math.max(1, page), totalPages);
+  const safePage = idPage ? idPage.page : Math.min(Math.max(1, page), totalPages);
 
   if (total === 0) return { rows: [], total, page: safePage };
 
-  const matches = await prisma.prospectMatch.findMany({
-    where,
-    orderBy: buildOrderBy(sort, direction),
-    skip: (safePage - 1) * pageSize,
-    take: pageSize,
+  const unordered = await prisma.prospectMatch.findMany({
+    // `where` is still applied alongside the id list, so the tenancy and batch
+    // scoping is enforced on this path too and not only inside the raw query.
+    where: idPage ? { AND: [where, { id: { in: idPage.ids } }] } : where,
+    ...(idPage
+      ? {}
+      : {
+          orderBy: buildOrderBy(sort, direction),
+          skip: (safePage - 1) * pageSize,
+          take: pageSize,
+        }),
     select: {
       id: true,
       score: true,
@@ -197,6 +393,15 @@ export async function fetchMatchPage({
       },
     },
   });
+
+  // `IN (...)` has no order, so the SQL ordering is reapplied here over the 25
+  // rows of the page — not a re-sort of the data set, just a reshuffle of what
+  // the ORDER BY already decided.
+  const matches = idPage
+    ? idPage.ids
+        .map((id) => unordered.find((match) => match.id === id))
+        .filter((match): match is (typeof unordered)[number] => match !== undefined)
+    : unordered;
 
   // Signals and stored scores are loaded once for exactly the people on this
   // page. The stored score lookup is filtered by `userId` — a match row is

@@ -54,14 +54,27 @@ export function parseProspectSearchParams(params: Record<string, string | string
   };
 }
 
-function buildWhere(importBatchId: string, query: string): Prisma.ConnectionWhereInput {
-  if (!query) return { importBatchId };
+function buildWhere(
+  importBatchId: string,
+  query: string,
+  /**
+   * Exact raw `company` spellings to restrict to. Used by /companies/[key]:
+   * a company group is a set of raw spellings that normalise to one key, and
+   * listing them here keeps that page on this shared path rather than forking
+   * a second paging implementation. Undefined means "no company restriction".
+   */
+  companyIn?: string[],
+): Prisma.ConnectionWhereInput {
+  const companyScope: Prisma.ConnectionWhereInput = companyIn ? { company: { in: companyIn } } : {};
+
+  if (!query) return { importBatchId, ...companyScope };
 
   // Each whitespace-separated term must match somewhere, so "jane acme"
   // finds Jane at Acme rather than everyone called Jane or working at Acme.
   const terms = query.split(/\s+/).filter(Boolean).slice(0, 5);
   return {
     importBatchId,
+    ...companyScope,
     AND: terms.map((term) => ({
       OR: [
         { firstName: { contains: term, mode: "insensitive" as const } },
@@ -111,6 +124,7 @@ export async function fetchProspectPage({
   sort,
   direction,
   query,
+  companyIn,
   pageSize = PROSPECT_PAGE_SIZE,
 }: {
   /**
@@ -124,9 +138,11 @@ export async function fetchProspectPage({
   sort: ProspectSortKey;
   direction: "asc" | "desc";
   query: string;
+  /** Restrict to these exact raw `Connection.company` values. See `buildWhere`. */
+  companyIn?: string[];
   pageSize?: number;
 }): Promise<{ rows: ProspectRow[]; total: number; page: number }> {
-  const where = buildWhere(importBatchId, query);
+  const where = buildWhere(importBatchId, query, companyIn);
 
   const total = await prisma.connection.count({ where });
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
