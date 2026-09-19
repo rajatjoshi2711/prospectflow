@@ -23,6 +23,24 @@ const CHUNK_SIZE = 500;
 
 type ParsedRow = Record<string, string>;
 
+/**
+ * Cell values that mean "absent" despite not being empty.
+ *
+ * LinkedIn's exporter serialises a missing value as the four-character STRING
+ * `null` in some files — `Invitations.csv` writes it for an invitation sent
+ * without a note. Taken at face value it is a non-empty string, so a
+ * `.trim().length > 0` check reads it as real content: every note-less
+ * invitation looked like a personalised one and quietly added +5 to that
+ * person's relationship strength, with "personalised invitation note" listed
+ * as a factor.
+ *
+ * Treated as absent at the field level so every consumer benefits rather than
+ * each having to remember. A company or a message whose true content is the
+ * bare word "null" is a loss we accept; it is far likelier to be the
+ * exporter's placeholder than anyone's real data.
+ */
+const ABSENT_VALUES = new Set(["null", "undefined", "n/a"]);
+
 /** Case-insensitive lookup across a set of possible header spellings. */
 function getField(row: ParsedRow, candidates: string[]): string | null {
   const lowerMap = new Map<string, string>();
@@ -31,7 +49,10 @@ function getField(row: ParsedRow, candidates: string[]): string | null {
   }
   for (const candidate of candidates) {
     const value = lowerMap.get(candidate.toLowerCase());
-    if (value !== undefined && value !== "") return value;
+    if (value === undefined) continue;
+    const trimmed = value.trim();
+    if (trimmed === "" || ABSENT_VALUES.has(trimmed.toLowerCase())) continue;
+    return value;
   }
   return null;
 }

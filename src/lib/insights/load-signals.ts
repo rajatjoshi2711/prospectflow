@@ -1,4 +1,5 @@
 import "server-only";
+import { hasRealText } from "@/lib/insights/absent";
 
 import { prisma } from "@/lib/prisma";
 import {
@@ -102,7 +103,7 @@ export async function loadInteractionSignals(
     if (!owner) continue;
     const signal = byKey.get(owner) ?? blankSignal();
     signal.hasInvitation = true;
-    if ((invitation.message ?? "").trim().length > 0) {
+    if (hasRealText(invitation.message)) {
       signal.hasInvitationNote = true;
     }
     byKey.set(owner, signal);

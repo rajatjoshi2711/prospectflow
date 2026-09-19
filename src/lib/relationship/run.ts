@@ -1,4 +1,5 @@
 import "server-only";
+import { hasRealText } from "@/lib/insights/absent";
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -225,7 +226,7 @@ async function runScoring(userId: string): Promise<RelationshipRunSummary> {
     if (!connectionId) continue;
     const aggregate = aggregates.get(connectionId) ?? blankAggregate();
     aggregate.hasInvitation = true;
-    if ((invitation.message ?? "").trim().length > 0) aggregate.hasInvitationNote = true;
+    if (hasRealText(invitation.message)) aggregate.hasInvitationNote = true;
     aggregates.set(connectionId, aggregate);
   }
 
