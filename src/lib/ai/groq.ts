@@ -258,6 +258,25 @@ export function createGroqProvider(): LLMProvider {
       };
     } catch (error) {
       const callError = error instanceof LLMCallError ? error : toCallError(error);
+
+      // A 4xx means WE sent something the provider rejected — a bad parameter,
+      // a malformed tool schema, a broken tool-call sequence. The provider's
+      // own message names the offending field; ours ("http_400") only names
+      // the class. Without this line a 400 is undiagnosable from the outside,
+      // which is exactly the position a live 400 left us in.
+      //
+      // Runtime logs, NOT the audit table: the message can echo a fragment of
+      // the request, so it belongs in an ephemeral operator-only stream rather
+      // than a durable row. Truncated for the same reason. 5xx and timeouts
+      // are the provider's problem and already legible from `errorKind`, so
+      // they are left out to keep this signal rare and meaningful.
+      const status = callError.status;
+      if (status !== undefined && status >= 400 && status < 500) {
+        console.error(
+          `[groq] ${status} rejected a ${options.context.useCase} call on ${activeModel}: ` +
+            `${callError.message.slice(0, 500)}`,
+        );
+      }
       // A failed call still costs whatever the provider generated before it
       // gave up, and an ERROR row is the debugging record. Logged before the
       // rethrow so no failure path can skip it.
