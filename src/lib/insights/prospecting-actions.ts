@@ -3,6 +3,12 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { connectionSearchSql } from "@/lib/insights/prospects";
+import {
+  joinUserMarksSql,
+  USEFULNESS_RANK_SELECT,
+  usefulnessFirstByColumn,
+  userMarksSql,
+} from "@/lib/insights/mark-order";
 import type { ProspectSortKey } from "@/components/prospect-table";
 
 /**
@@ -213,11 +219,11 @@ function orderBySql(sort: ProspectSortKey, direction: "asc" | "desc"): Prisma.Sq
     // Unreachable in practice: the page validates `?sort=` against its own
     // allow-list before calling. Falling back to a stable order rather than
     // throwing keeps a hand-edited URL from 500ing.
-    return Prisma.raw(`"connectionId" ASC`);
+    return usefulnessFirstByColumn(`"connectionId" ASC`);
   }
   // `Prisma.raw` over a literal from the table above, selected by an
   // already-validated key — never over anything from the query string.
-  return Prisma.raw(`${clause(direction === "desc")}, "connectionId" ASC`);
+  return usefulnessFirstByColumn(`${clause(direction === "desc")}, "connectionId" ASC`);
 }
 
 /** One page of an action list: the connection ids to render, in order. */
@@ -406,6 +412,7 @@ export async function loadAwaitingReply(
  * quietly smaller number than the dashboard card.
  */
 export async function fetchAwaitingReplyPage({
+  userId,
   importBatchId,
   page,
   sort,
@@ -413,6 +420,12 @@ export async function fetchAwaitingReplyPage({
   query,
   pageSize = ACTION_PAGE_SIZE,
 }: {
+  /**
+   * The VIEWER. Only used to join their own Usefulness marks, which lead every
+   * ordering — never another member's, which would sort this list by a
+   * judgement the reader never made.
+   */
+  userId: string;
   importBatchId: string;
   page: number;
   sort: ProspectSortKey;
@@ -423,9 +436,12 @@ export async function fetchAwaitingReplyPage({
   return runActionPage(
     (limit, offset) =>
       prisma.$queryRaw<RawPageRow[]>(Prisma.sql`
-        WITH ${awaitingReplySql(importBatchId)},
+        WITH ${userMarksSql(userId)},
+        ${awaitingReplySql(importBatchId)},
         filtered AS (
-          SELECT * FROM owed o
+          SELECT o.*, ${Prisma.raw(USEFULNESS_RANK_SELECT)}
+          FROM owed o
+          ${joinUserMarksSql(`o."connectionIdentityKey"`)}
           WHERE o."connectionId" IS NOT NULL ${connectionSearchSql(query, "o")}
         ),
         unlinked AS (
@@ -536,6 +552,7 @@ export async function loadRecentlyConnectedNeverMessaged(
 }
 
 export async function fetchNeverMessagedPage({
+  userId,
   importBatchId,
   page,
   sort,
@@ -544,6 +561,8 @@ export async function fetchNeverMessagedPage({
   now = new Date(),
   pageSize = ACTION_PAGE_SIZE,
 }: {
+  /** The VIEWER. See `fetchAwaitingReplyPage`. */
+  userId: string;
   importBatchId: string;
   page: number;
   sort: ProspectSortKey;
@@ -556,9 +575,13 @@ export async function fetchNeverMessagedPage({
   return runActionPage(
     (limit, offset) =>
       prisma.$queryRaw<RawPageRow[]>(Prisma.sql`
-        WITH ${neverMessagedSql(importBatchId, since)},
+        WITH ${userMarksSql(userId)},
+        ${neverMessagedSql(importBatchId, since)},
         filtered AS (
-          SELECT * FROM candidates c WHERE TRUE ${connectionSearchSql(query, "c")}
+          SELECT c.*, ${Prisma.raw(USEFULNESS_RANK_SELECT)}
+          FROM candidates c
+          ${joinUserMarksSql(`c."connectionIdentityKey"`)}
+          WHERE TRUE ${connectionSearchSql(query, "c")}
         ),
         tallies AS (
           SELECT (SELECT COUNT(*) FROM filtered)::int AS total, 0 AS unlinked
@@ -684,6 +707,7 @@ export async function loadDormantHighValue(
 }
 
 export async function fetchDormantPage({
+  userId,
   importBatchId,
   page,
   sort,
@@ -692,6 +716,8 @@ export async function fetchDormantPage({
   now = new Date(),
   pageSize = ACTION_PAGE_SIZE,
 }: {
+  /** The VIEWER. See `fetchAwaitingReplyPage`. */
+  userId: string;
   importBatchId: string;
   page: number;
   sort: ProspectSortKey;
@@ -704,9 +730,13 @@ export async function fetchDormantPage({
   return runActionPage(
     (limit, offset) =>
       prisma.$queryRaw<RawPageRow[]>(Prisma.sql`
-        WITH ${dormantSql(importBatchId, cutoff)},
+        WITH ${userMarksSql(userId)},
+        ${dormantSql(importBatchId, cutoff)},
         filtered AS (
-          SELECT * FROM candidates c WHERE TRUE ${connectionSearchSql(query, "c")}
+          SELECT c.*, ${Prisma.raw(USEFULNESS_RANK_SELECT)}
+          FROM candidates c
+          ${joinUserMarksSql(`c."connectionIdentityKey"`)}
+          WHERE TRUE ${connectionSearchSql(query, "c")}
         ),
         tallies AS (
           SELECT (SELECT COUNT(*) FROM filtered)::int AS total, 0 AS unlinked

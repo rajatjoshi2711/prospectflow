@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { CampaignLeadStatus, Prisma } from "@prisma/client";
+import { Prisma, type CampaignLeadStatus, type ConnectionMarkValue } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   deriveRelationshipStrength,
@@ -9,6 +9,9 @@ import {
 import { loadInteractionSignals } from "@/lib/insights/load-signals";
 import { loadStoredRelationshipScores } from "@/lib/insights/load-stored-scores";
 import { toPersonRef } from "@/lib/insights/signals";
+import { loadConnectionMarks } from "@/lib/insights/marks";
+import { joinUserMarksSql, usefulnessFirstByExpr, userMarksSql } from "@/lib/insights/mark-order";
+import { connectionSearchSql } from "@/lib/insights/prospects";
 import { summarizeRawRow } from "@/lib/campaigns/fields";
 import type { SpreadsheetRow } from "@/lib/campaigns/parse-spreadsheet";
 import type { ProspectSortKey } from "@/components/prospect-table";
@@ -36,6 +39,12 @@ export type CampaignLeadRow = {
   relationshipFactors?: string[];
   /** `ai`, `heuristic`, or null when unscored. See `ProspectRow`. */
   relationshipBasis?: "ai" | "heuristic" | null;
+  /**
+   * The owner's thumbs up / thumbs down on this person, read on the same key
+   * the row links by. Null when they have not judged them, which is also the
+   * band the list orders them into.
+   */
+  mark: ConnectionMarkValue | null;
   /** True when this lead resolved to a Connection in the user's own network. */
   inNetwork: boolean;
   /** A line of context lifted from the original spreadsheet row. */
@@ -80,29 +89,97 @@ function buildWhere(
   };
 }
 
-function buildOrderBy(
-  sort: ProspectSortKey,
-  direction: "asc" | "desc",
-): Prisma.CampaignLeadOrderByWithRelationInput[] {
-  switch (sort) {
-    case "company":
-      return [{ company: direction }, { lastName: "asc" }];
-    case "strength":
-      // Strength lives on the linked `Connection`, so this orders through the
-      // to-one relation. A lead that matched nobody in the network has no
-      // connection and therefore a null score: NULLs last in both directions
-      // keeps those cold leads out of the way rather than at the top of the
-      // ascending list.
-      return [
-        { connection: { relationshipScore: { sort: direction, nulls: "last" } } },
-        { lastName: "asc" },
-      ];
-    // Leads have no `connectedOn` of their own and no match score, so those
-    // sort keys fall through to name — the table only offers name/company and
-    // strength on this view anyway.
-    default:
-      return [{ firstName: direction }, { lastName: direction }];
-  }
+/**
+ * The SECONDARY ordering — what the reader's chosen column does INSIDE each
+ * Usefulness band, which `usefulnessFirstByExpr` puts in front.
+ *
+ * `l` is the lead, `c` the connection it linked to (LEFT JOINed, so null for a
+ * cold lead). Strength lives on the connection: a lead that matched nobody in
+ * the network has no score at all, and NULLS LAST in both directions keeps
+ * those out of the way rather than at the top of the ascending list.
+ *
+ * Leads have no `connectedOn` of their own and no match score, so those sort
+ * keys fall through to name — the table only offers name, company and strength
+ * on this view anyway.
+ *
+ * Every clause ends on `l."id"`, a unique value, so paging is stable on ties.
+ */
+const LEAD_ORDER_BY: Partial<Record<ProspectSortKey, (d: string) => string>> = {
+  name: (d) => `l."firstName" ${d} NULLS LAST, l."lastName" ${d} NULLS LAST`,
+  company: (d) => `l."company" ${d} NULLS LAST, l."lastName" ASC NULLS LAST`,
+  strength: (d) => `c."relationshipScore" ${d} NULLS LAST, l."lastName" ASC NULLS LAST`,
+};
+
+function leadOrderBySql(sort: ProspectSortKey, direction: "asc" | "desc"): Prisma.Sql {
+  const clause = (LEAD_ORDER_BY[sort] ?? LEAD_ORDER_BY.name)!;
+  // `Prisma.raw` over a literal from the table above, selected by an
+  // already-validated key — never over anything from the query string.
+  return usefulnessFirstByExpr(
+    `${clause(direction === "desc" ? "DESC" : "ASC")}, l."id" ASC`,
+  );
+}
+
+/**
+ * The ids of one page of leads, ordered Usefulness-first.
+ *
+ * WHICH KEY THE MARK IS LOOKED UP BY: `COALESCE(connection.identityKey,
+ * lead.identityKey)` — the same key the row itself renders its prospect link
+ * with, and the same one `fetchCampaignLeadPage` reads the mark back on. A
+ * lead that matched someone in the network is marked against the connection's
+ * key, so a thumbs-down given on `/connections` also sinks that person here; a
+ * cold lead is marked against its own key, which is what its prospect page is
+ * addressed by. Getting this wrong either way would show a mark the ordering
+ * did not use, or order by a mark the row does not show.
+ *
+ * UNLINKED LEADS ARE NOT A FOURTH BAND. A lead with no connection, and a lead
+ * with no key at all (imported before `CampaignLead.identityKey` existed), both
+ * simply have no mark and land in the middle "unmarked" band — which is the
+ * truth: nobody has judged them. They are not pushed down with the
+ * thumbs-downs, because "not yet in your network" is not "not useful".
+ *
+ * COST: one index scan of `CampaignLead` on the campaign (plus the status
+ * equality when filtered), a primary-key lookup per linked lead into
+ * `Connection`, and a hash join to the member's own marks — an index scan of
+ * `ConnectionMark` on the `userId` prefix of `@@unique([userId, identityKey])`,
+ * which also carries `value`, so it is index-only and needs no new index.
+ */
+async function fetchCampaignLeadIds({
+  userId,
+  campaignId,
+  query,
+  status,
+  sort,
+  direction,
+  limit,
+  offset,
+}: {
+  userId: string;
+  campaignId: string;
+  query: string;
+  status: CampaignLeadStatus | null;
+  sort: ProspectSortKey;
+  direction: "asc" | "desc";
+  limit: number;
+  offset: number;
+}): Promise<string[]> {
+  const statusFilter = status
+    ? Prisma.sql`AND l."status" = ${status}::"CampaignLeadStatus"`
+    : Prisma.empty;
+
+  const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+    WITH ${userMarksSql(userId)}
+    SELECT l."id" AS id
+    FROM "CampaignLead" l
+    LEFT JOIN "Connection" c ON c."id" = l."connectionId"
+    ${joinUserMarksSql(`COALESCE(c."identityKey", l."identityKey")`)}
+    WHERE l."campaignId" = ${campaignId}
+      ${statusFilter}
+      ${connectionSearchSql(query, "l")}
+    ORDER BY ${leadOrderBySql(sort, direction)}
+    LIMIT ${limit} OFFSET ${offset}
+  `);
+
+  return rows.map((row) => row.id);
 }
 
 /**
@@ -151,11 +228,36 @@ export async function fetchCampaignLeadPage({
   const safePage = Math.min(Math.max(1, page), totalPages);
   if (total === 0) return { rows: [], total, page: safePage };
 
-  const leads = await prisma.campaignLead.findMany({
-    where,
-    orderBy: buildOrderBy(sort, direction),
-    skip: (safePage - 1) * pageSize,
-    take: pageSize,
+  // The owning user is read from the campaign itself rather than taken as a
+  // parameter, so this function keeps its single source of scoping (see the
+  // note on `campaignId`). It is needed BEFORE the page query now, because the
+  // Usefulness band that leads the ordering is the owner's own marks.
+  const owner = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    select: { userId: true },
+  });
+  if (!owner) return { rows: [], total: 0, page: 1 };
+
+  // Ordered in SQL: the Usefulness band is a join on
+  // `ConnectionMark.identityKey` with no Prisma relation behind it, so
+  // `orderBy` cannot reach it. Only this page's ids come back.
+  const orderedIds = await fetchCampaignLeadIds({
+    userId: owner.userId,
+    campaignId,
+    query,
+    status,
+    sort,
+    direction,
+    limit: pageSize,
+    offset: (safePage - 1) * pageSize,
+  });
+  if (orderedIds.length === 0) return { rows: [], total, page: safePage };
+
+  const unordered = await prisma.campaignLead.findMany({
+    // The campaign scope, status filter and search terms are re-applied
+    // alongside the id list, so scoping is enforced here too and not only
+    // inside the raw query.
+    where: { AND: [where, { id: { in: orderedIds } }] },
     select: {
       id: true,
       firstName: true,
@@ -182,6 +284,13 @@ export async function fetchCampaignLeadPage({
     },
   });
 
+  // `IN (...)` carries no order, so the SQL ordering is reapplied over the ≤25
+  // rows of this page — a reshuffle of what the ORDER BY already decided, not a
+  // re-sort of the data set.
+  const leads = orderedIds
+    .map((id) => unordered.find((lead) => lead.id === id))
+    .filter((lead): lead is (typeof unordered)[number] => lead !== undefined);
+
   // Signals are per import batch. Every linked connection on this page comes
   // from the user's latest completed import (that is the only batch
   // `buildConnectionIndex` links against), so one batch id covers the page.
@@ -194,22 +303,24 @@ export async function fetchCampaignLeadPage({
       )
     : null;
 
-  // Stored relationship scores are keyed by (user, connection). The owning user
-  // is read from the campaign itself rather than taken as a parameter, so this
-  // function keeps its single source of scoping (see the note on `campaignId`).
-  const owner =
+  // Stored relationship scores are keyed by (user, connection), so they are
+  // scoped to the campaign's owner.
+  const storedScores =
     linked.length > 0
-      ? await prisma.campaign.findUnique({
-          where: { id: campaignId },
-          select: { userId: true },
-        })
-      : null;
-  const storedScores = owner
-    ? await loadStoredRelationshipScores(
-        owner.userId,
-        linked.map((lead) => lead.connectionId!).filter(Boolean),
-      )
-    : new Map();
+      ? await loadStoredRelationshipScores(
+          owner.userId,
+          linked.map((lead) => lead.connectionId!).filter(Boolean),
+        )
+      : new Map();
+
+  // The SAME key the ordering joined on and the same one the row links by, so
+  // the thumb shown on a row is always the one that placed it in its band.
+  const markKey = (lead: (typeof leads)[number]) =>
+    lead.connection?.identityKey ?? lead.identityKey ?? undefined;
+  const marks = await loadConnectionMarks(
+    owner.userId,
+    leads.map(markKey).filter((key): key is string => Boolean(key)),
+  );
 
   const rows: CampaignLeadRow[] = leads.map((lead) => {
     const connection = lead.connection;
@@ -245,7 +356,8 @@ export async function fetchCampaignLeadPage({
       // `?? undefined` because `CampaignLead.identityKey` is nullable for rows
       // written before the column existed, and `ProspectTable` renders a row
       // with no key as plain text rather than a link that 404s.
-      identityKey: connection?.identityKey ?? lead.identityKey ?? undefined,
+      identityKey: markKey(lead),
+      mark: (markKey(lead) && marks.get(markKey(lead)!)) || null,
       firstName: lead.firstName,
       lastName: lead.lastName,
       company: lead.company,

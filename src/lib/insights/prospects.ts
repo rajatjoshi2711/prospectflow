@@ -9,6 +9,11 @@ import {
 import { loadInteractionSignals } from "@/lib/insights/load-signals";
 import { loadStoredRelationshipScores } from "@/lib/insights/load-stored-scores";
 import { loadConnectionMarks } from "@/lib/insights/marks";
+import {
+  joinUserMarksSql,
+  usefulnessFirstByExpr,
+  userMarksSql,
+} from "@/lib/insights/mark-order";
 import { toPersonRef } from "@/lib/insights/signals";
 import { deriveLeadStatus } from "@/lib/insights/status";
 import type { ProspectRow, ProspectSortKey } from "@/components/prospect-table";
@@ -131,29 +136,97 @@ function buildWhere(
   };
 }
 
-function buildOrderBy(
-  sort: ProspectSortKey,
-  direction: "asc" | "desc",
-): Prisma.ConnectionOrderByWithRelationInput[] {
-  switch (sort) {
-    case "company":
-      return [{ company: direction }, { lastName: "asc" }];
-    case "connectedOn":
-      return [{ connectedOn: direction }, { lastName: "asc" }];
-    case "strength":
-      // NULLs last in BOTH directions: an unscored connection is unknown, not
-      // weak, so it never leads the ascending list. Before the first scoring
-      // run every row is null and this degrades to the name tiebreak, which is
-      // stable rather than arbitrary.
-      return [
-        { relationshipScore: { sort: direction, nulls: "last" } },
-        { lastName: "asc" },
-        { firstName: "asc" },
-      ];
-    case "name":
-    default:
-      return [{ firstName: direction }, { lastName: direction }];
-  }
+function dir(direction: "asc" | "desc") {
+  return direction === "desc" ? "DESC" : "ASC";
+}
+
+/**
+ * ORDER BY clauses for the connections list, keyed by an already-validated
+ * sort key. These are the SECONDARY keys: `usefulnessFirstByExpr` puts the
+ * Usefulness band in front of whichever one the reader picked.
+ *
+ * Every clause ends on `c."id"`, a unique value, so two rows tying on the
+ * dimension keep a fixed relative order between the page-1 and page-2 queries.
+ * Without that, paging duplicates some rows and drops others.
+ *
+ * NULLS LAST in BOTH directions throughout: a missing company or an unscored
+ * relationship is unknown, not "empty" or "weak", so it never leads the
+ * ascending list.
+ */
+const PROSPECT_ORDER_BY: Partial<Record<ProspectSortKey, (d: string) => string>> = {
+  name: (d) => `c."firstName" ${d} NULLS LAST, c."lastName" ${d} NULLS LAST`,
+  company: (d) => `c."company" ${d} NULLS LAST, c."lastName" ASC NULLS LAST`,
+  connectedOn: (d) => `c."connectedOn" ${d} NULLS LAST, c."lastName" ASC NULLS LAST`,
+  strength: (d) =>
+    `c."relationshipScore" ${d} NULLS LAST, c."lastName" ASC NULLS LAST, c."firstName" ASC NULLS LAST`,
+};
+
+function prospectOrderBySql(sort: ProspectSortKey, direction: "asc" | "desc"): Prisma.Sql {
+  // Falls back to name rather than throwing: `?sort=` is already validated
+  // against the view's allow-list, so this is only reachable from a
+  // hand-edited URL and a 500 there would be worse than a sane order.
+  const clause = (PROSPECT_ORDER_BY[sort] ?? PROSPECT_ORDER_BY.name)!;
+  // `Prisma.raw` over a literal from the table above, selected by an
+  // already-validated key — never over anything from the query string.
+  return usefulnessFirstByExpr(`${clause(dir(direction))}, c."id" ASC`);
+}
+
+/**
+ * The ids of one page of connections, ordered Usefulness-first.
+ *
+ * WHY RAW: the Usefulness band is a `LEFT JOIN` on `ConnectionMark.identityKey`
+ * with no Prisma relation behind it (see `mark-order.ts`), so `orderBy` cannot
+ * express it. Only the ≤25 ids of the page come back; the SELECT, the mark and
+ * signal loads and the enrichment all stay on the one shared path below, the
+ * same shape the action pages already use via `population`.
+ *
+ * COST: one index scan of `Connection` on `@@index([importBatchId])` (~5.6k
+ * rows for the current import), hash-joined to the member's own marks (an index
+ * scan of `ConnectionMark` on the `userId` prefix of
+ * `@@unique([userId, identityKey])`, which also covers `value` — so the join is
+ * index-only and needs no new index), then one sort and a LIMIT. The mark set
+ * is one member's, so it stays small however large the network gets.
+ */
+async function fetchProspectIds({
+  userId,
+  importBatchId,
+  companyIn,
+  query,
+  sort,
+  direction,
+  limit,
+  offset,
+}: {
+  userId: string;
+  importBatchId: string;
+  companyIn?: string[];
+  query: string;
+  sort: ProspectSortKey;
+  direction: "asc" | "desc";
+  limit: number;
+  offset: number;
+}): Promise<string[]> {
+  // An empty company list means "no spellings in this group" — `IN ()` is not
+  // valid SQL, and the honest answer is an empty page, not every connection.
+  if (companyIn && companyIn.length === 0) return [];
+
+  const companyFilter = companyIn
+    ? Prisma.sql`AND c."company" IN (${Prisma.join(companyIn)})`
+    : Prisma.empty;
+
+  const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+    WITH ${userMarksSql(userId)}
+    SELECT c."id" AS id
+    FROM "Connection" c
+    ${joinUserMarksSql(`c."identityKey"`)}
+    WHERE c."importBatchId" = ${importBatchId}
+      ${companyFilter}
+      ${connectionSearchSql(query, "c")}
+    ORDER BY ${prospectOrderBySql(sort, direction)}
+    LIMIT ${limit} OFFSET ${offset}
+  `);
+
+  return rows.map((row) => row.id);
 }
 
 /**
@@ -204,11 +277,7 @@ export async function fetchProspectPage({
   population?: { ids: string[]; total: number; page: number };
   pageSize?: number;
 }): Promise<{ rows: ProspectRow[]; total: number; page: number }> {
-  // The search terms and batch scope are applied here too, not only inside the
-  // raw population query, so tenancy is enforced on both paths.
-  const where = population
-    ? { AND: [buildWhere(importBatchId, query, companyIn), { id: { in: population.ids } }] }
-    : buildWhere(importBatchId, query, companyIn);
+  const where = buildWhere(importBatchId, query, companyIn);
 
   const total = population ? population.total : await prisma.connection.count({ where });
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -218,15 +287,30 @@ export async function fetchProspectPage({
     return { rows: [], total, page: safePage };
   }
 
+  // Either the caller resolved the page in SQL (the action pages) or this does
+  // it here — but it is always a list of ids in order, because the Usefulness
+  // band that leads every ordering is a join Prisma cannot express.
+  const orderedIds = population
+    ? population.ids
+    : await fetchProspectIds({
+        userId,
+        importBatchId,
+        companyIn,
+        query,
+        sort,
+        direction,
+        limit: pageSize,
+        offset: (safePage - 1) * pageSize,
+      });
+
+  if (orderedIds.length === 0) {
+    return { rows: [], total, page: safePage };
+  }
+
   const unordered = await prisma.connection.findMany({
-    where,
-    ...(population
-      ? {}
-      : {
-          orderBy: buildOrderBy(sort, direction),
-          skip: (safePage - 1) * pageSize,
-          take: pageSize,
-        }),
+    // The batch scope, company scope and search terms are re-applied alongside
+    // the id list, so tenancy is enforced here and not only in the raw query.
+    where: { AND: [where, { id: { in: orderedIds } }] },
     select: {
       id: true,
       identityKey: true,
@@ -245,11 +329,9 @@ export async function fetchProspectPage({
   // `IN (...)` carries no order, so the SQL ordering is reapplied over the ≤25
   // rows of this page — a reshuffle of what the ORDER BY already decided, not a
   // re-sort of the data set.
-  const connections = population
-    ? population.ids
-        .map((id) => unordered.find((connection) => connection.id === id))
-        .filter((connection): connection is (typeof unordered)[number] => connection !== undefined)
-    : unordered;
+  const connections = orderedIds
+    .map((id) => unordered.find((connection) => connection.id === id))
+    .filter((connection): connection is (typeof unordered)[number] => connection !== undefined);
 
   const refs = connections.map(toPersonRef);
   const [signals, storedScores, marks] = await Promise.all([

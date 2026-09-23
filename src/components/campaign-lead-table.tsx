@@ -102,6 +102,10 @@ export function CampaignLeadTable({
     // Present only for leads that resolved to a connection, which is what makes
     // the name a link to the prospect page.
     identityKey: row.identityKey,
+    // The campaign list is ordered Usefulness-first like every other list of
+    // people, so the column has to be here: a grouping the reader cannot see
+    // reads as a broken sort.
+    mark: row.mark,
     firstName: row.firstName,
     lastName: row.lastName,
     company: row.company,
@@ -224,6 +228,7 @@ export function CampaignLeadTable({
       direction={direction}
       query={query}
       searchPlaceholder="Search leads by name or company…"
+      markable
       extraColumn={{ header: "From your file" }}
       toolbar={toolbar}
       renderStatus={(row) => (

@@ -49,6 +49,8 @@ export async function ActionListPage({
   /** The extra cell for one row, from the dimension the population query returned. */
   renderExtra: (value: { at: Date; relationshipScore: number | null }) => ReactNode;
   load: (args: {
+    /** The viewer, so the population can order by their own Usefulness marks. */
+    userId: string;
     importBatchId: string;
     page: number;
     sort: ProspectSortKey;
@@ -132,6 +134,7 @@ export async function ActionListPage({
   }
 
   const result = await load({
+    userId,
     importBatchId: batch.id,
     page: params.page,
     sort: params.sort,

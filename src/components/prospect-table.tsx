@@ -247,6 +247,22 @@ export function ProspectTable({
         )
       ) : (
         <>
+          {/* SAY WHAT THE SORT ACTUALLY DOES.
+              Usefulness is the PRIMARY key on every list of people — thumbs up,
+              then unmarked, then thumbs down — and the column header the reader
+              clicks orders within those groups, not across them. That is
+              deliberate, but from the outside it looks exactly like a broken
+              sort ("I clicked Relationship strength and it is still grouped"),
+              so the table states it rather than leaving the reader to guess.
+              Only on views that show the Usefulness column: elsewhere there is
+              no grouping on screen to explain. */}
+          {markable ? (
+            <p className="ef-caption" style={{ color: "var(--text-secondary)" }}>
+              Grouped by Usefulness — useful first, then unmarked, then not
+              useful. Sorting by a column orders people within each group.
+            </p>
+          ) : null}
+
           <div className="ef-card overflow-x-auto p-0">
             <table className="w-full border-collapse text-left">
               <thead>
