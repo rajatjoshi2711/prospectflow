@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   deriveRelationshipStrength,
@@ -28,30 +28,76 @@ export async function getLatestCompleteBatch(userId: string) {
   });
 }
 
-export function parseProspectSearchParams(params: Record<string, string | string[] | undefined>) {
+/** The sort keys `/connections` itself offers. */
+const CONNECTIONS_SORT_KEYS: ProspectSortKey[] = ["name", "company", "connectedOn", "strength"];
+
+export function parseProspectSearchParams(
+  params: Record<string, string | string[] | undefined>,
+  /**
+   * Lets a view widen or narrow what `?sort=` may say and what it defaults to.
+   *
+   * The action pages (Phase 8) need this: their whole point is an ordering the
+   * connections list has no column for ("longest waiting first"), and a sort
+   * key a view cannot actually execute must not be accepted from a pasted URL
+   * — it would silently render in some other order than the header claims.
+   */
+  options?: {
+    sortKeys?: ProspectSortKey[];
+    defaultSort?: ProspectSortKey;
+    defaultDirection?: "asc" | "desc";
+  },
+) {
   const read = (key: string) => {
     const value = params[key];
     return Array.isArray(value) ? value[0] : value;
   };
 
+  const allowed = options?.sortKeys ?? CONNECTIONS_SORT_KEYS;
+  const fallbackSort = options?.defaultSort ?? allowed[0] ?? "name";
+
   const rawPage = Number.parseInt(read("page") ?? "1", 10);
   const rawSort = read("sort");
   const rawDirection = read("dir");
 
-  const sort: ProspectSortKey =
-    rawSort === "company" ||
-    rawSort === "connectedOn" ||
-    rawSort === "strength" ||
-    rawSort === "name"
-      ? rawSort
-      : "name";
+  const sort: ProspectSortKey = allowed.includes(rawSort as ProspectSortKey)
+    ? (rawSort as ProspectSortKey)
+    : fallbackSort;
 
   return {
     page: Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1,
     sort,
-    direction: rawDirection === "desc" ? ("desc" as const) : ("asc" as const),
+    direction:
+      rawDirection === "desc"
+        ? ("desc" as const)
+        : rawDirection === "asc"
+          ? ("asc" as const)
+          : (options?.defaultDirection ?? ("asc" as const)),
     query: (read("q") ?? "").trim(),
   };
+}
+
+/**
+ * The search box's predicate, as SQL.
+ *
+ * Exists so a view that has to page in raw SQL (the action pages' populations
+ * cannot be expressed as a Prisma `where`) filters on exactly the same terms as
+ * `buildWhere` below, rather than growing its own near-miss version. Every
+ * whitespace-separated term must match somewhere, capped at five.
+ *
+ * Returns `Prisma.empty` for an empty query, so it can be interpolated
+ * unconditionally into a WHERE clause.
+ */
+export function connectionSearchSql(query: string, alias: string): Prisma.Sql {
+  const column = (name: string) => Prisma.raw(`${alias}."${name}"`);
+  const terms = query.split(/\s+/).filter(Boolean).slice(0, 5);
+  if (terms.length === 0) return Prisma.empty;
+  return Prisma.sql`AND ${Prisma.join(
+    terms.map(
+      (term) =>
+        Prisma.sql`(${column("firstName")} ILIKE ${`%${term}%`} OR ${column("lastName")} ILIKE ${`%${term}%`} OR ${column("company")} ILIKE ${`%${term}%`})`,
+    ),
+    " AND ",
+  )}`;
 }
 
 function buildWhere(
@@ -125,6 +171,7 @@ export async function fetchProspectPage({
   direction,
   query,
   companyIn,
+  population,
   pageSize = PROSPECT_PAGE_SIZE,
 }: {
   /**
@@ -140,23 +187,46 @@ export async function fetchProspectPage({
   query: string;
   /** Restrict to these exact raw `Connection.company` values. See `buildWhere`. */
   companyIn?: string[];
+  /**
+   * A page that was already selected, ordered and counted in SQL.
+   *
+   * The "do this next" action pages need this. Their populations ("the latest
+   * message in this thread was theirs", "no message either way") and their
+   * orderings ("longest waiting first") are set-based things Prisma's query
+   * builder cannot express, so `prospecting-actions.ts` resolves them in one
+   * raw query and hands back just this page's connection ids. Everything after
+   * that — status, Usefulness marks, relationship strength, the prospect-page
+   * link — stays on this one shared path, so an action page and `/connections`
+   * cannot render the same person differently.
+   *
+   * This is the same shape `fetchMatchPage` uses for its never-messaged view.
+   */
+  population?: { ids: string[]; total: number; page: number };
   pageSize?: number;
 }): Promise<{ rows: ProspectRow[]; total: number; page: number }> {
-  const where = buildWhere(importBatchId, query, companyIn);
+  // The search terms and batch scope are applied here too, not only inside the
+  // raw population query, so tenancy is enforced on both paths.
+  const where = population
+    ? { AND: [buildWhere(importBatchId, query, companyIn), { id: { in: population.ids } }] }
+    : buildWhere(importBatchId, query, companyIn);
 
-  const total = await prisma.connection.count({ where });
+  const total = population ? population.total : await prisma.connection.count({ where });
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const safePage = Math.min(Math.max(1, page), totalPages);
+  const safePage = population ? population.page : Math.min(Math.max(1, page), totalPages);
 
   if (total === 0) {
     return { rows: [], total, page: safePage };
   }
 
-  const connections = await prisma.connection.findMany({
+  const unordered = await prisma.connection.findMany({
     where,
-    orderBy: buildOrderBy(sort, direction),
-    skip: (safePage - 1) * pageSize,
-    take: pageSize,
+    ...(population
+      ? {}
+      : {
+          orderBy: buildOrderBy(sort, direction),
+          skip: (safePage - 1) * pageSize,
+          take: pageSize,
+        }),
     select: {
       id: true,
       identityKey: true,
@@ -171,6 +241,15 @@ export async function fetchProspectPage({
       relationshipBasis: true,
     },
   });
+
+  // `IN (...)` carries no order, so the SQL ordering is reapplied over the ≤25
+  // rows of this page — a reshuffle of what the ORDER BY already decided, not a
+  // re-sort of the data set.
+  const connections = population
+    ? population.ids
+        .map((id) => unordered.find((connection) => connection.id === id))
+        .filter((connection): connection is (typeof unordered)[number] => connection !== undefined)
+    : unordered;
 
   const refs = connections.map(toPersonRef);
   const [signals, storedScores, marks] = await Promise.all([

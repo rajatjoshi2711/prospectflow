@@ -31,8 +31,21 @@ import { prospectHref } from "@/lib/prospects/person-key";
  * rather than the value each row derives at render time, which is why the
  * column had to exist at all: paging is server-side, so only something SQL can
  * see is sortable. Opt a view in with `strengthSortable`.
+ *
+ * `waiting` and `lastMessage` belong to the Phase 8 action pages, whose whole
+ * point is an ordering no column on `/connections` expresses — how long someone
+ * has been waiting, how long a relationship has been quiet. Descending means
+ * "most of it" (longest waiting, longest dormant), which is the OLDEST date;
+ * `prospecting-actions.ts` owns that inversion so only one place decides it.
  */
-export type ProspectSortKey = "name" | "company" | "connectedOn" | "score" | "strength";
+export type ProspectSortKey =
+  | "name"
+  | "company"
+  | "connectedOn"
+  | "score"
+  | "strength"
+  | "waiting"
+  | "lastMessage";
 
 export type ProspectRow = {
   id: string;
@@ -169,8 +182,12 @@ export function ProspectTable({
 
   function toggleSort(key: ProspectSortKey) {
     // Scores read best high-first, names low-first, so each column starts in
-    // the direction people actually want.
-    const preferred = key === "score" || key === "strength" ? "desc" : "asc";
+    // the direction people actually want. The two elapsed-time columns start
+    // high too: "longest waiting" is what an action list is for.
+    const preferred =
+      key === "score" || key === "strength" || key === "waiting" || key === "lastMessage"
+        ? "desc"
+        : "asc";
     const opposite = preferred === "asc" ? "desc" : "asc";
     const nextDirection = sort === key && direction === preferred ? opposite : preferred;
     pushParams({ sort: key, dir: nextDirection, page: "1" });

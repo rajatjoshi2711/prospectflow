@@ -22,6 +22,7 @@ import {
   ACCEPTANCE_CAVEATS,
 } from "@/lib/insights/outreach-performance";
 import { prospectHref } from "@/lib/prospects/person-key";
+import { formatElapsed } from "@/lib/format/elapsed";
 import { ScoringStatusCard } from "@/components/scoring-status";
 import { StatCard } from "@/components/stat-card";
 import { InvitationAcceptanceChart } from "@/components/invitation-acceptance-chart";
@@ -271,12 +272,14 @@ export default async function DashboardPage() {
       <h2 className="ef-h3 mt-10 mb-1">Do this next</h2>
       <p className="ef-caption mb-4" style={{ maxWidth: 680 }}>
         People in your latest export who are waiting on something from you. Each
-        list shows the {ACTION_LIST_LIMIT} most urgent and counts the rest.
+        list shows the {ACTION_LIST_LIMIT} most urgent; &ldquo;See all&rdquo; opens the
+        whole list with the same search, sorting and paging as your connections.
       </p>
 
       <div className="flex flex-wrap gap-6">
         <ActionCard
           title="You owe them a reply"
+          href="/actions/awaiting-reply"
           caption="Conversations where they wrote last and nothing went back."
           total={awaitingReply?.total ?? 0}
           hasImport={batch !== null}
@@ -301,6 +304,7 @@ export default async function DashboardPage() {
 
         <ActionCard
           title="Connected, never messaged"
+          href="/actions/new-connections"
           caption={`Accepted in the last ${RECENTLY_CONNECTED_DAYS} days with no message either way. Warmth fades fast after an accept.`}
           total={neverMessaged?.total ?? 0}
           hasImport={batch !== null}
@@ -317,6 +321,7 @@ export default async function DashboardPage() {
 
         <ActionCard
           title="Dormant, high value"
+          href="/actions/dormant"
           caption={`Real message history, nothing for ${DORMANT_MONTHS}+ months, relationship strength ${HIGH_VALUE_SCORE} or above.`}
           total={dormant?.total ?? 0}
           hasImport={batch !== null}
@@ -537,6 +542,7 @@ export default async function DashboardPage() {
 function ActionCard({
   title,
   caption,
+  href,
   total,
   hasImport,
   emptyMessage,
@@ -546,6 +552,12 @@ function ActionCard({
 }: {
   title: string;
   caption: string;
+  /**
+   * The list's own full page. The card is a preview of the first
+   * ACTION_LIST_LIMIT rows; everything past that lives there, with the same
+   * table, paging, sorting and search as /connections.
+   */
+  href: string;
   total: number;
   hasImport: boolean;
   emptyMessage: string;
@@ -583,11 +595,16 @@ function ActionCard({
           <ul className="flex flex-col gap-3" style={{ margin: 0, padding: 0, listStyle: "none" }}>
             {rows}
           </ul>
-          {remaining > 0 ? (
-            <p className="ef-caption mt-3" style={{ color: "var(--neutral-400)" }}>
-              +{remaining.toLocaleString()} more
-            </p>
-          ) : null}
+          <div className="mt-3 flex items-baseline gap-3">
+            <Link href={href} className="ef-btn ef-btn-text" style={{ padding: 0 }}>
+              See all {total.toLocaleString()}
+            </Link>
+            {remaining > 0 ? (
+              <span className="ef-caption" style={{ color: "var(--neutral-400)" }}>
+                +{remaining.toLocaleString()} more
+              </span>
+            ) : null}
+          </div>
         </>
       )}
 
@@ -653,17 +670,6 @@ function ActionRow({
       </p>
     </li>
   );
-}
-
-/** A coarse, honest elapsed time: days up to two months, then months, then years. */
-function formatElapsed(from: Date, now: Date = new Date()): string {
-  const days = Math.max(0, Math.floor((now.getTime() - from.getTime()) / 86_400_000));
-  if (days === 0) return "today";
-  if (days === 1) return "1 day";
-  if (days < 60) return `${days} days`;
-  const months = Math.floor(days / 30);
-  if (months < 24) return `${months} months`;
-  return `${Math.floor(days / 365)} years`;
 }
 
 /** Seconds as the largest unit that still reads as a number, e.g. "4 hours". */
