@@ -42,6 +42,7 @@ const MAIN_NAV: NavItem[] = [
 ];
 
 const ADMIN_NAV: NavItem[] = [
+  { href: "/admin/organization", label: "Organization" },
   { href: "/admin/users", label: "Users" },
   { href: "/admin/icps", label: "ICP definitions" },
   { href: "/admin/channel-partners", label: "Channel partner definitions" },

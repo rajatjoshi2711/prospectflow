@@ -40,7 +40,22 @@ enum Role {
 model Organization {
   id          String   @id @default(cuid())
   name        String
+  /// The join key. Every signup from this domain lands in this org, so it is
+  /// deliberately NOT editable from the admin UI: changing it would strand
+  /// every existing member's domain and silently route future signups into a
+  /// new org. Changing it is a deliberate data-migration job, not a form field.
   emailDomain String   @unique
+  /// Optional profile details, all admin-editable. Nullable rather than
+  /// defaulted to "" so "never filled in" stays distinguishable from
+  /// "deliberately cleared" — the UI renders the two the same, but analytics
+  /// and future AI prompting should not have to guess.
+  website     String?
+  industry    String?
+  location    String?
+  /// What the organization does and sells. Written for people, but it is also
+  /// the natural place to ground ICP scoring prompts later: a model scoring
+  /// "is this person a fit" reads far better with the seller described.
+  description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

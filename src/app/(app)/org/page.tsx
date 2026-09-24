@@ -37,7 +37,14 @@ export default async function OrgDashboardPage() {
   const [organization, members, series, suggestions] = await Promise.all([
     prisma.organization.findUnique({
       where: { id: session.organizationId },
-      select: { name: true, emailDomain: true },
+      select: {
+        name: true,
+        emailDomain: true,
+        website: true,
+        industry: true,
+        location: true,
+        description: true,
+      },
     }),
     listOrgMembers(session.organizationId),
     fetchConnectionsOverTime(session.organizationId),
@@ -95,6 +102,74 @@ export default async function OrgDashboardPage() {
         Everyone on {organization?.emailDomain ?? "your domain"}, how their networks are
         growing, and what the team should act on next.
       </p>
+
+      {/*
+        The org profile, rendered only when an admin has actually filled
+        something in. An empty card of em-dashes tells nobody anything; admins
+        still reach the form from the sidebar, and a member cannot act on it
+        either way.
+      */}
+      {organization &&
+      (organization.industry ||
+        organization.location ||
+        organization.website ||
+        organization.description) ? (
+        <section className="ef-card ef-rise mb-8">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
+            <h2 className="ef-h3" style={{ margin: 0 }}>
+              About {organization.name}
+            </h2>
+            {session.role === "ADMIN" ? (
+              <Link className="ef-small" href="/admin/organization">
+                Edit details
+              </Link>
+            ) : null}
+          </div>
+          <dl
+            className="grid gap-x-8 gap-y-3"
+            style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", margin: 0 }}
+          >
+            {organization.industry ? (
+              <div>
+                <dt className="ef-caption">Industry</dt>
+                <dd className="ef-small" style={{ margin: 0 }}>
+                  {organization.industry}
+                </dd>
+              </div>
+            ) : null}
+            {organization.location ? (
+              <div>
+                <dt className="ef-caption">Headquarters</dt>
+                <dd className="ef-small" style={{ margin: 0 }}>
+                  {organization.location}
+                </dd>
+              </div>
+            ) : null}
+            {organization.website ? (
+              <div>
+                <dt className="ef-caption">Website</dt>
+                <dd className="ef-small" style={{ margin: 0 }}>
+                  <a
+                    href={organization.website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {organization.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+                  </a>
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+          {organization.description ? (
+            <p
+              className="ef-small mt-4"
+              style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap", maxWidth: 680 }}
+            >
+              {organization.description}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       <div
         className="mb-8 grid gap-4"
