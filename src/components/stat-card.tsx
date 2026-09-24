@@ -13,10 +13,17 @@
 export function StatCard({
   label,
   value,
+  hint,
   emphasis = false,
 }: {
   label: string;
   value: string;
+  /**
+   * A line under the number, for a figure that means nothing without it — a
+   * count "since last import" is meaningless unless the reader knows which
+   * import it is being compared against.
+   */
+  hint?: string;
   /** At most one per surface. Paints the brand gradient behind the tile. */
   emphasis?: boolean;
 }) {
@@ -39,6 +46,14 @@ export function StatCard({
       >
         {value}
       </p>
+      {hint ? (
+        <p
+          className="ef-caption mt-1"
+          style={emphasis ? { color: "rgba(255,255,255,0.82)" } : { color: "var(--text-secondary)" }}
+        >
+          {hint}
+        </p>
+      ) : null}
     </div>
   );
 }

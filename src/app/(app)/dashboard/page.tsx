@@ -3,7 +3,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
-import { getLatestCompleteBatch } from "@/lib/insights/prospects";
+import {
+  countNewConnectionsSinceLastImport,
+  getLatestCompleteBatch,
+} from "@/lib/insights/prospects";
 import { fetchTopMatchesByCompany, type CompanyGroup } from "@/lib/insights/matches";
 import { getRelationshipScoringState } from "@/lib/relationship/state";
 import {
@@ -45,8 +48,9 @@ export default async function DashboardPage() {
     prisma.importBatch.count({ where: { userId: session.userId, status: "COMPLETE" } }),
   ]);
 
-  const [connectionCount, jobChanges] = await Promise.all([
+  const [connectionCount, newConnections, jobChanges] = await Promise.all([
     batch ? prisma.connection.count({ where: { importBatchId: batch.id } }) : Promise.resolve(0),
+    countNewConnectionsSinceLastImport(session.userId),
     // JobChangeEvent has no userId column; scope it through the batch it was
     // detected on, which belongs to this user.
     prisma.jobChangeEvent.findMany({
@@ -180,6 +184,18 @@ export default async function DashboardPage() {
             user?.lastImportAt
               ? user.lastImportAt.toLocaleDateString()
               : "Never"
+          }
+        />
+        {/* Null when there is only one import: "we cannot tell yet" is a
+            different statement from "nobody new", and a zero would read as
+            the latter. */}
+        <StatCard
+          label="New connections"
+          value={newConnections ? newConnections.count.toLocaleString() : "—"}
+          hint={
+            newConnections
+              ? `Since your import on ${newConnections.comparedTo.toLocaleDateString()}`
+              : "Needs a second import to compare"
           }
         />
         <StatCard label="Completed imports" value={importCount.toLocaleString()} />

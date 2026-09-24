@@ -33,6 +33,53 @@ export async function getLatestCompleteBatch(userId: string) {
   });
 }
 
+/**
+ * How many people appear in the newest import that were not in the one before.
+ *
+ * "New" means new TO THE EXPORT, matched on `identityKey` — the same stable
+ * person key job-change detection diffs on. It is not `connectedOn`: LinkedIn
+ * backfills that with the real connection date, so someone who accepted months
+ * ago but only now shows up in an export is still new information to the user.
+ *
+ * Returns null when there is nothing to compare against — a first (or only)
+ * import. That is a different fact from "no new connections", and the card
+ * says so rather than printing a zero that would read as "nobody accepted".
+ *
+ * COST: two index scans on `@@index([userId, status, completedAt])` to find the
+ * batches, then one anti-join between the two batches' connections, both sides
+ * riding `@@index([importBatchId])`. Counting happens in Postgres; no rows come
+ * back.
+ */
+export async function countNewConnectionsSinceLastImport(userId: string): Promise<{
+  count: number;
+  comparedTo: Date;
+} | null> {
+  const batches = await prisma.importBatch.findMany({
+    where: { userId, status: "COMPLETE" },
+    orderBy: { completedAt: "desc" },
+    take: 2,
+    select: { id: true, completedAt: true, createdAt: true },
+  });
+  if (batches.length < 2) return null;
+
+  const [latest, previous] = batches;
+  const rows = await prisma.$queryRaw<{ n: number }[]>`
+    SELECT COUNT(*)::int AS n
+    FROM "Connection" c
+    WHERE c."importBatchId" = ${latest.id}
+      AND NOT EXISTS (
+        SELECT 1 FROM "Connection" p
+        WHERE p."importBatchId" = ${previous.id}
+          AND p."identityKey" = c."identityKey"
+      )
+  `;
+
+  return {
+    count: rows[0]?.n ?? 0,
+    comparedTo: previous.completedAt ?? previous.createdAt,
+  };
+}
+
 /** The sort keys `/connections` itself offers. */
 const CONNECTIONS_SORT_KEYS: ProspectSortKey[] = ["name", "company", "connectedOn", "strength"];
 
