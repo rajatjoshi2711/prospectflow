@@ -129,9 +129,9 @@ export default async function DashboardPage() {
   // as one round of parallel queries so the page waits once, not five times.
   const [awaitingReply, neverMessaged, dormant, acceptance, replyPerformance] = batch
     ? await Promise.all([
-        loadAwaitingReply(batch.id),
-        loadRecentlyConnectedNeverMessaged(batch.id),
-        loadDormantHighValue(batch.id),
+        loadAwaitingReply(batch.id, session.userId),
+        loadRecentlyConnectedNeverMessaged(batch.id, session.userId),
+        loadDormantHighValue(batch.id, session.userId),
         loadInvitationAcceptance(batch.id),
         loadReplyPerformance(batch.id),
       ])

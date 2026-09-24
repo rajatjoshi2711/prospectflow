@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { connectionSearchSql } from "@/lib/insights/prospects";
 import {
+  excludeNotUsefulSql,
   joinUserMarksSql,
   USEFULNESS_RANK_SELECT,
   usefulnessFirstByColumn,
@@ -316,7 +317,7 @@ async function runActionPage(
  * covering `(importBatchId, conversationId, sentAt DESC)` index would turn the
  * message sort into an ordered index scan but is not worth a migration here.
  */
-function awaitingReplySql(importBatchId: string): Prisma.Sql {
+function awaitingReplySql(importBatchId: string, userId: string): Prisma.Sql {
   return Prisma.sql`
     ${connectionPoolSql(importBatchId)},
     latest AS (
@@ -348,6 +349,7 @@ function awaitingReplySql(importBatchId: string): Prisma.Sql {
       LEFT JOIN conns_by_identity ci ON ci."identityKey" = l."identityKey"
       LEFT JOIN conns_by_name cn ON l."nameKey" IS NOT NULL AND cn."nameKey" = l."nameKey"
       WHERE l."senderIsUser" = false
+        ${excludeNotUsefulSql(`COALESCE(ci."identityKey", cn."identityKey")`, userId)}
     )
   `;
 }
@@ -355,6 +357,7 @@ function awaitingReplySql(importBatchId: string): Prisma.Sql {
 /** The dashboard card: the longest-waiting few, plus the tallies. */
 export async function loadAwaitingReply(
   importBatchId: string,
+  userId: string,
 ): Promise<ActionList<AwaitingReplyItem> & { unknownLatest: number }> {
   const rows = await prisma.$queryRaw<
     {
@@ -372,7 +375,7 @@ export async function loadAwaitingReply(
       unknownLatest: number;
     }[]
   >(Prisma.sql`
-    WITH ${awaitingReplySql(importBatchId)},
+    WITH ${awaitingReplySql(importBatchId, userId)},
     tallies AS (
       SELECT (SELECT COUNT(*) FROM owed)::int AS total,
              (SELECT COUNT(*) FROM latest WHERE "senderIsUser" IS NULL)::int AS "unknownLatest"
@@ -437,7 +440,7 @@ export async function fetchAwaitingReplyPage({
     (limit, offset) =>
       prisma.$queryRaw<RawPageRow[]>(Prisma.sql`
         WITH ${userMarksSql(userId)},
-        ${awaitingReplySql(importBatchId)},
+        ${awaitingReplySql(importBatchId, userId)},
         filtered AS (
           SELECT o.*, ${Prisma.raw(USEFULNESS_RANK_SELECT)}
           FROM owed o
@@ -489,7 +492,7 @@ export async function fetchAwaitingReplyPage({
  * aggregate; one index scan of `Connection` on `@@index([importBatchId])`
  * (~5.6k rows); one hash anti-join. No index needed beyond the two that exist.
  */
-function neverMessagedSql(importBatchId: string, since: Date): Prisma.Sql {
+function neverMessagedSql(importBatchId: string, since: Date, userId: string): Prisma.Sql {
   return Prisma.sql`
     ${messagedKeysSql(importBatchId)},
     candidates AS (
@@ -507,6 +510,7 @@ function neverMessagedSql(importBatchId: string, since: Date): Prisma.Sql {
         AND c."connectedOn" >= ${since}
         AND NOT EXISTS (SELECT 1 FROM messaged m WHERE m.k = c."identityKey")
         AND (c."nameKey" IS NULL OR NOT EXISTS (SELECT 1 FROM messaged m WHERE m.k = c."nameKey"))
+        ${excludeNotUsefulSql(`c."identityKey"`, userId)}
     )
   `;
 }
@@ -518,6 +522,7 @@ function recentlyConnectedSince(now: Date): Date {
 
 export async function loadRecentlyConnectedNeverMessaged(
   importBatchId: string,
+  userId: string,
   now: Date = new Date(),
 ): Promise<ActionList<NeverMessagedItem>> {
   const rows = await prisma.$queryRaw<
@@ -531,7 +536,7 @@ export async function loadRecentlyConnectedNeverMessaged(
       total: number;
     }[]
   >(Prisma.sql`
-    WITH ${neverMessagedSql(importBatchId, recentlyConnectedSince(now))}
+    WITH ${neverMessagedSql(importBatchId, recentlyConnectedSince(now), userId)}
     SELECT "connectionIdentityKey", "firstName", "lastName", "company", "position",
            "connectedOn", (COUNT(*) OVER ())::int AS total
     FROM candidates
@@ -576,7 +581,7 @@ export async function fetchNeverMessagedPage({
     (limit, offset) =>
       prisma.$queryRaw<RawPageRow[]>(Prisma.sql`
         WITH ${userMarksSql(userId)},
-        ${neverMessagedSql(importBatchId, since)},
+        ${neverMessagedSql(importBatchId, since, userId)},
         filtered AS (
           SELECT c.*, ${Prisma.raw(USEFULNESS_RANK_SELECT)}
           FROM candidates c
@@ -618,7 +623,7 @@ export async function fetchNeverMessagedPage({
  * one index scan of `Connection` on `@@index([importBatchId, relationshipScore])`,
  * two hash joins. Nothing scales with the number of rows rendered.
  */
-function dormantSql(importBatchId: string, cutoff: Date): Prisma.Sql {
+function dormantSql(importBatchId: string, cutoff: Date, userId: string): Prisma.Sql {
   return Prisma.sql`
     last_seen AS (
       SELECT "identityKey" AS k, MAX("sentAt") AS "lastAt"
@@ -649,6 +654,7 @@ function dormantSql(importBatchId: string, cutoff: Date): Prisma.Sql {
       LEFT JOIN agg byName ON c."nameKey" IS NOT NULL AND byName.k = c."nameKey"
       WHERE c."importBatchId" = ${importBatchId}
         AND c."relationshipScore" >= ${HIGH_VALUE_SCORE}
+        ${excludeNotUsefulSql(`c."identityKey"`, userId)}
     ),
     candidates AS (
       SELECT * FROM scored
@@ -665,6 +671,7 @@ function dormantCutoff(now: Date): Date {
 
 export async function loadDormantHighValue(
   importBatchId: string,
+  userId: string,
   now: Date = new Date(),
 ): Promise<DormantList> {
   const [rows, scoredConnections] = await Promise.all([
@@ -680,7 +687,7 @@ export async function loadDormantHighValue(
         total: number;
       }[]
     >(Prisma.sql`
-      WITH ${dormantSql(importBatchId, dormantCutoff(now))}
+      WITH ${dormantSql(importBatchId, dormantCutoff(now), userId)}
       SELECT "connectionIdentityKey", "firstName", "lastName", "company", "position",
              "relationshipScore", "lastMessageAt", (COUNT(*) OVER ())::int AS total
       FROM candidates
@@ -731,7 +738,7 @@ export async function fetchDormantPage({
     (limit, offset) =>
       prisma.$queryRaw<RawPageRow[]>(Prisma.sql`
         WITH ${userMarksSql(userId)},
-        ${dormantSql(importBatchId, cutoff)},
+        ${dormantSql(importBatchId, cutoff, userId)},
         filtered AS (
           SELECT c.*, ${Prisma.raw(USEFULNESS_RANK_SELECT)}
           FROM candidates c

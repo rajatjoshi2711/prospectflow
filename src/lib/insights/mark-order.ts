@@ -98,3 +98,34 @@ export function usefulnessFirstByExpr(rest: string): Prisma.Sql {
 export function usefulnessFirstByColumn(rest: string): Prisma.Sql {
   return Prisma.raw(`"${USEFULNESS_RANK_COLUMN}" ASC, ${rest}`);
 }
+
+/**
+ * Drops people the signed-in user has marked NOT USEFUL.
+ *
+ * For the "Do this next" lists only. Those are a worklist — a queue of people
+ * to act on today — so someone explicitly dismissed does not belong in it at
+ * all. That is a stronger rule than the ordering above, which merely sinks
+ * them to the bottom: on a browsable list like `/connections` a thumbs-down
+ * person should still be findable, because the list is a record of the network
+ * rather than a set of instructions.
+ *
+ * Thumbs-UP and UNMARKED both stay. "Useful" here means "not ruled out", not
+ * "explicitly endorsed" — filtering to only thumbs-up would empty the lists,
+ * since almost nobody in a 5,000-person network has been judged either way.
+ *
+ * `NOT EXISTS` rather than a join and a rank test: this has to DROP the row,
+ * and on the awaiting-reply list a filtered join would instead stop the thread
+ * resolving to a connection, which would quietly recount a dismissed person as
+ * an unlinked one in that page's footnote.
+ *
+ * `keyExpr` is SQL we wrote (a column reference), never anything from a query
+ * string.
+ */
+export function excludeNotUsefulSql(keyExpr: string, userId: string): Prisma.Sql {
+  return Prisma.sql`AND NOT EXISTS (
+    SELECT 1 FROM "ConnectionMark" nm
+    WHERE nm."userId" = ${userId}
+      AND nm."identityKey" = ${Prisma.raw(keyExpr)}
+      AND nm."value" = 'DOWN'
+  )`;
+}
