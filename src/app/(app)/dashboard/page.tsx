@@ -9,6 +9,7 @@ import {
 } from "@/lib/insights/prospects";
 import { fetchTopMatchesByCompany, type CompanyGroup } from "@/lib/insights/matches";
 import { getRelationshipScoringState } from "@/lib/relationship/state";
+import { LINKEDIN_EXPORT_URL } from "@/lib/ingestion/linkedin-export";
 import {
   loadAwaitingReply,
   loadDormantHighValue,
@@ -167,12 +168,33 @@ export default async function DashboardPage() {
             <p className="ef-small" style={{ color: "var(--text-secondary)" }}>
               {daysSinceImport === null
                 ? "ProspectFlow needs your LinkedIn data export before it can show your network, job changes, or prospects."
-                : `Your last import was ${daysSinceImport} days ago. Re-upload every ${REMINDER_AFTER_DAYS} days so job changes stay current.`}
+                : `Your last import was ${daysSinceImport} days ago. Re-upload every ${REMINDER_AFTER_DAYS} days so job changes stay current.`}{" "}
+              Request it from LinkedIn first — they email the archive when it is
+              ready, usually within ten minutes.
             </p>
           </div>
-          <Link href="/imports" className="ef-btn ef-btn-primary">
-            {daysSinceImport === null ? "Upload export" : "Upload a new export"}
-          </Link>
+          {/*
+            Two steps, in the order they actually happen: fetch the archive
+            from LinkedIn, then upload it here. The badge used to offer only
+            the second, which is the one you cannot do yet if you do not have
+            the file.
+
+            Upload keeps the primary styling because it is the step that
+            happens inside ProspectFlow; the LinkedIn link leaves the app.
+          */}
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href={LINKEDIN_EXPORT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ef-btn ef-btn-secondary"
+            >
+              Get export from LinkedIn
+            </a>
+            <Link href="/imports" className="ef-btn ef-btn-primary">
+              {daysSinceImport === null ? "Upload export" : "Upload a new export"}
+            </Link>
+          </div>
         </div>
       ) : null}
 
